@@ -201,12 +201,6 @@ Route::middleware('auth')->group(function () {
         Route::get('/sla-queue/poll', [AdminController::class, 'slaQueuePoll'])->middleware('throttle:polling')->name('sla.queue.poll');
         Route::post('/sla-queue/document/{document}/review', [AdminController::class, 'reviewAutoApproval'])->name('sla.review');
 
-        // Workflow Config's own "decide this pending assignment directly"
-        // action — see AdminController::overrideAssignment()'s docblock.
-        // A seat with genuinely no eligible approver never reaches a
-        // "pending, waiting" state at all anymore — it auto-approves
-        // immediately at routing time (see WorkflowService::assignStage()).
-
         Route::post('/system-settings/business-hours-toggle', [AdminController::class, 'updateBusinessHoursEnforcement'])->name('systemSettings.businessHoursToggle');
 
         Route::get('/approval-workflow', [AdminController::class, 'workflowConfig'])->name('workflow.config');
