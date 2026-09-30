@@ -62,7 +62,13 @@ return Application::configure(basePath: dirname(__DIR__))
         // might ever miss (e.g. the queue worker was down when a job should have
         // fired). 5 minutes is plenty for a safety net that isn't the
         // primary mechanism anymore.
-        $schedule->command('workflow:check-parallel-slas')->everyFiveMinutes()->withoutOverlapping();
+        // appendOutputTo: this command has been failing silently in
+        // production (Railway scheduler logs show "FAIL" on every run,
+        // but the default `> /dev/null 2>&1` redirect discards the
+        // actual exception) — capturing output here until the real
+        // cause is found and fixed, then this can be reverted.
+        $schedule->command('workflow:check-parallel-slas')->everyFiveMinutes()->withoutOverlapping()
+            ->appendOutputTo(storage_path('logs/scheduler-parallel-slas.log'));
         // 2) the follow-ups that genuinely need a schedule rather than an
         // event: outage detection/compensation, the Admin's late-review
         // reminders for auto-approvals still awaiting review, and the
