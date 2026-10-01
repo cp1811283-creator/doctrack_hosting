@@ -9,7 +9,7 @@
      #connection-status comment for why: blur measurably lags on weaker
      graphics hardware, a flat semi-transparent tint doesn't. --}}
 <div id="kpi-drilldown-overlay" class="hidden fixed inset-0 z-50 bg-surface-900/70 flex items-center justify-center p-4" onclick="if(event.target === this) closeKpiDrilldown()">
-    <div class="bg-white rounded-xl shadow-2xl w-[90vw] max-w-6xl h-[85vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+    <div class="bg-white rounded-xl shadow-2xl w-[90vw] max-w-7xl h-[85vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
         <div class="flex items-center justify-between px-6 py-4 border-b border-surface-200 flex-shrink-0">
             <h3 id="kpi-drilldown-title" class="text-sm font-semibold text-surface-900"></h3>
             <button type="button" onclick="closeKpiDrilldown()" class="text-surface-400 hover:text-surface-700" aria-label="Close">

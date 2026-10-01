@@ -10,7 +10,7 @@
         </button>
     @endif
     <div class="min-w-0 flex-1">
-        <p class="text-sm font-semibold text-surface-900 truncate">{{ $other->full_name }} ({{ ucfirst($other->role) }})</p>
+        <p class="text-sm font-semibold text-surface-900 truncate">{{ $other->full_name }} ({{ $other->displayRole() }})</p>
         <p class="text-xs {{ $other->isOnline() ? 'text-approved-700' : 'text-surface-400' }}">{{ $other->isOnline() ? 'Online' : 'Offline' }}</p>
     </div>
     <button type="button" onclick="openChatMedia({{ $other->user_id }})" class="p-1.5 rounded-lg hover:bg-surface-100 text-surface-500" title="Photos" aria-label="View photos">

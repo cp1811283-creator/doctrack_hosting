@@ -154,8 +154,8 @@
                     </div>
                 </details>
 
-                <button type="submit"
-                    class="mt-4 w-full bg-gradient-to-b from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white text-sm font-medium py-2.5 rounded-lg shadow-sm transition-all">
+                <button type="submit" id="upload-submit-btn"
+                    class="mt-4 w-full bg-gradient-to-b from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white text-sm font-medium py-2.5 rounded-lg shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed">
                     Submit Document(s)
                 </button>
             </form>
@@ -164,6 +164,21 @@
 </div>
 
 <script>
+    // Bug fix (confirmed 2026-10-01 in production — two separate
+    // DocumentRepository rows for the same file, 3 seconds apart): nothing
+    // visibly happens the instant Submit is clicked (the browser is busy
+    // uploading), so a second click before that registers fires a second,
+    // fully independent form submission — each one creates its own
+    // SubmissionBatch + document. Disabling the button the moment the
+    // form's submit event actually fires (not on click — click could be
+    // cancelled by the browser's own required-field validation, which
+    // would leave the button stuck disabled with no submission in flight)
+    // closes that window; the page navigates away on success, so there's
+    // nothing to re-enable it for.
+    document.getElementById('upload-form').addEventListener('submit', function () {
+        document.getElementById('upload-submit-btn').disabled = true;
+    });
+
     // New Submission popup open/close.
     document.getElementById('new-submission-open').addEventListener('click', function () {
         document.getElementById('new-submission-overlay').classList.remove('hidden');

@@ -67,7 +67,7 @@ class AdminController extends Controller
                     });
             })->count(),
             'rejected' => DocumentRepository::where('global_status', 'rejected')->count(),
-            'active_users' => User::where('is_active', true)->count(),
+            'active_users' => User::count(),
             'violations_count' => SlaViolation::count(),
         ];
     }
@@ -279,17 +279,35 @@ class AdminController extends Controller
 
         $chartRows = $this->analyticsBuckets($cfg['unit'], $cfg['format'], $since, $until);
 
-        // The hourly Day tab needs its KPI tiles to summarize the WHOLE
-        // day, trended against the whole of yesterday — not the most
-        // recent hour trended against the hour before it, which would be
-        // noise (a document system isn't active every single hour) rather
-        // than a meaningful signal. Every other granularity's last bucket
-        // already IS one full period, so it can be used directly.
-        if ($cfg['unit'] === 'hour') {
-            $current = $this->analyticsAggregateRow($chartRows);
-            $previousDayRows = $this->analyticsBuckets('hour', $cfg['format'], $since->copy()->subDay(), $until->copy()->subDay());
-            $previous = $this->analyticsAggregateRow($previousDayRows);
+        // Every granularity's KPI tiles summarize the WHOLE visible window
+        // (all $cfg['count'] periods — e.g. the full trailing 12 weeks),
+        // trended against an equal-length window immediately before it —
+        // not just the single most-recent bucket trended against the one
+        // before that. A single bucket can easily be entirely empty (e.g.
+        // checking the dashboard right as a new week or month starts,
+        // before anything has happened in it yet) even though the window
+        // just before it was full of real activity, which would otherwise
+        // show "—" on every tile despite plenty of recent data existing.
+        // This generalizes what used to be Day-tab-only special-casing
+        // (the comment this replaced explained it for "hour" alone) to
+        // every tab, on the same reasoning.
+        $current = $this->analyticsAggregateRow($chartRows);
 
+        $previousSince = match ($cfg['unit']) {
+            'hour' => $since->copy()->subDay(),
+            'week' => $since->copy()->subWeeks($cfg['count']),
+            'month' => $since->copy()->subMonths($cfg['count']),
+            'year' => $since->copy()->subYears($cfg['count']),
+        };
+        $previousUntil = match ($cfg['unit']) {
+            'hour' => $until->copy()->subDay(),
+            'week' => $until->copy()->subWeeks($cfg['count']),
+            'month' => $until->copy()->subMonths($cfg['count']),
+            'year' => $until->copy()->subYears($cfg['count']),
+        };
+        $previous = $this->analyticsAggregateRow($this->analyticsBuckets($cfg['unit'], $cfg['format'], $previousSince, $previousUntil));
+
+        if ($cfg['unit'] === 'hour') {
             // The raw "H:00" grouping key doesn't carry the actual calendar
             // date and reads in 24-hour time — confusing on its own once
             // you're looking at a specific chosen date rather than "today"
@@ -317,11 +335,6 @@ class AdminController extends Controller
                     ? $weekStart->format('M j').'–'.$weekEnd->format('j, Y')
                     : $weekStart->format('M j').'–'.$weekEnd->format('M j, Y');
             }
-            $current = $chartRows[count($chartRows) - 1] ?? null;
-            $previous = $chartRows[count($chartRows) - 2] ?? null;
-        } else {
-            $current = $chartRows[count($chartRows) - 1] ?? null;
-            $previous = $chartRows[count($chartRows) - 2] ?? null;
         }
 
         return [
@@ -383,11 +396,26 @@ class AdminController extends Controller
                 return null;
             }
             $decidedTotal = $row->approved + $row->rejected;
+            // $row->approved is the COMBINED count (human + auto — see
+            // analyticsBuckets()'s whereIn(['approved','auto_approved'])) —
+            // kept that way since it's reused elsewhere (the chart line,
+            // the summary text) for total approved volume. Subtracting
+            // auto_approved here gives human-only approvals for the rate
+            // below, without touching that shared combined count.
+            $humanApproved = $row->approved - $row->auto_approved;
 
             return [
                 'uploaded' => $row->uploaded,
-                'approval_rate' => $rate($row->approved, $decidedTotal),
+                // Human-decided approvals only — previously included
+                // auto-approved too, which double-counted against
+                // auto_approval_rate below and made the two tiles look
+                // like they should sum to something they didn't.
+                'approval_rate' => $rate($humanApproved, $decidedTotal),
                 'auto_approval_rate' => $rate($row->auto_approved, $decidedTotal),
+                // Completes the three-way split of every decided document
+                // (human-approved / auto-approved / rejected) — together
+                // with the two rates above, these three now sum to 100%.
+                'rejection_rate' => $rate($row->rejected, $decidedTotal),
                 'avg_minutes' => $row->avg_minutes,
                 // violated_documents (not the raw 'violations' event
                 // count) — it's a subset of decidedTotal by construction
@@ -415,6 +443,7 @@ class AdminController extends Controller
                 'uploaded' => $trendOf('uploaded'),
                 'approval_rate' => $trendOf('approval_rate'),
                 'auto_approval_rate' => $trendOf('auto_approval_rate'),
+                'rejection_rate' => $trendOf('rejection_rate'),
                 'avg_minutes' => $trendOf('avg_minutes'),
                 'sla_violation_rate' => $trendOf('sla_violation_rate'),
             ] : null,
@@ -436,7 +465,19 @@ class AdminController extends Controller
             ->pluck('upload_date')
             ->groupBy(fn ($d) => $d->format($carbonFormat));
 
+        // A disputed auto-approval is excluded here the same way the
+        // Control Center's own "Approved" KPI already excludes it (see
+        // overviewStats()'s 'approved' => ...whereNull('disputed_at')) —
+        // it isn't actually settled, an Admin has flagged it. Without this,
+        // a dispute (which just sets disputed_at and saves the document —
+        // see AdminController.php's dispute handler) would bump updated_at
+        // to the DISPUTE moment and silently count the document as a
+        // legitimate decided auto-approval in whatever period the dispute
+        // happened in, not the period it was actually auto-approved in.
         $decidedBuckets = DocumentRepository::whereIn('global_status', ['approved', 'rejected', 'auto_approved'])
+            ->where(function ($q) {
+                $q->where('global_status', '!=', 'auto_approved')->orWhereNull('disputed_at');
+            })
             ->whereBetween('updated_at', [$since, $until])
             ->get(['document_id', 'upload_date', 'updated_at', 'global_status'])
             ->groupBy(fn ($d) => $d->updated_at->format($carbonFormat));
@@ -477,7 +518,12 @@ class AdminController extends Controller
             return (object) [
                 'bucket' => $bucket,
                 'uploaded' => $uploadBuckets->get($bucket, collect())->count(),
+                // Combined (human + auto) — kept for anything that still
+                // wants total approved volume. The chart's own "Approved"
+                // line uses 'human_approved' below instead, so it doesn't
+                // double-count against the separate "Auto Approved" line.
                 'approved' => $decided->whereIn('global_status', ['approved', 'auto_approved'])->count(),
+                'human_approved' => $decided->where('global_status', 'approved')->count(),
                 'rejected' => $decided->where('global_status', 'rejected')->count(),
                 'auto_approved' => $decided->where('global_status', 'auto_approved')->count(),
                 'avg_minutes' => $decided->isNotEmpty()
@@ -584,13 +630,34 @@ class AdminController extends Controller
             'pending' => 'In Progress',
             'approved' => 'Approved',
             'rejected' => 'Rejected',
-            'users' => 'Active Users',
+            'users' => 'All Users',
             'ml_model' => 'Active ML Model',
         ];
         abort_unless(array_key_exists($type, $labels), 404);
 
         if ($type === 'users') {
-            $users = User::where('is_active', true)->orderBy('full_name')->limit(100)->get();
+            // Sorted in PHP, not SQL — "Available" depends on isAvailable()'s
+            // live heartbeat check (is_active && isOnline()), not a plain
+            // column, and this list is already capped at 100 rows, so
+            // re-sorting the fetched collection is simplest. Role order is
+            // fixed (Admin, Originator, Approver — not alphabetical, which
+            // would put Approver before Originator); within Originator/
+            // Approver, Available accounts surface before Not Available,
+            // and a deactivated account (never truly "available" either)
+            // sorts last of all. Name is the final tiebreaker.
+            $users = User::orderBy('full_name')->limit(100)->get()
+                ->sortBy(function (User $user) {
+                    $roleRank = match ($user->role) {
+                        'admin' => 0,
+                        'originator' => 1,
+                        'approver' => 2,
+                        default => 3,
+                    };
+                    $statusRank = ! $user->is_active ? 2 : ($user->isAvailable() ? 0 : 1);
+
+                    return sprintf('%d%d%s', $roleRank, $statusRank, $user->full_name);
+                })
+                ->values();
 
             return view('admin.partials.dashboard-drilldown-users', ['users' => $users, 'label' => $labels[$type]]);
         }
@@ -613,7 +680,7 @@ class AdminController extends Controller
         // that could include an auto-approved document — an un-eager-loaded
         // access here would silently N+1 across the whole list.
         $query = DocumentRepository::with('originator')->orderByDesc('upload_date');
-        $query->with($showDecision ? ['assignments.approver', 'assignments.adminOverrideBy'] : ['assignments']);
+        $query->with($showDecision ? ['assignments.approver', 'assignments.adminOverrideBy', 'assignments.stage'] : ['assignments']);
         match ($type) {
             // Same bucketing as overviewStats() — an auto-approved document
             // still awaiting Admin review belongs in "In Progress," not
@@ -671,44 +738,93 @@ class AdminController extends Controller
 
     /**
      * Who actually decided a document's fate, and when — used by the
-     * Approved/Rejected dashboard drill-downs. Not simply "the last stage
-     * on record": a rejection auto-closes every other pending stage (see
-     * WorkflowService::completeStage()), and stages can complete out of
-     * sequence order, so the deciding assignment is whichever one
-     * genuinely drove the outcome — identified via cascade_closed_by
-     * being null, not by sniffing the comment text (which now carries the
-     * real rejection reason, copied over to every cascade-closed seat too
-     * — see completeStage()'s docblock).
+     * Approved/Rejected dashboard drill-downs. Returns 'by' as a LIST of
+     * ['name' => string, 'role' => ?string] — not a single name — because
+     * this app's workflow is vote-based, not single-decider:
+     *
+     * Rejected: a stage rejects once a MAJORITY of its seats vote reject
+     * (see DocumentAssignment::stageRejectionStatus()), not on one lone
+     * reject — WorkflowService::completeStage() then cascade-closes every
+     * OTHER pending seat, stamping cascade_closed_by on them. A seat that
+     * genuinely voted reject itself (first mover or the one that tipped
+     * the majority) is never touched by that cascade query (it only
+     * targets 'pending' seats), so cascade_closed_by IS NULL reliably
+     * selects every real voter — and since the whole document terminates
+     * the instant majority is reached, every real reject-voter necessarily
+     * belongs to that one stage, not scattered across several.
+     *
+     * Approved: Final Approval is Head-only (see WorkflowService.php's
+     * eligibleApproversForStage()) and is the stage that actually
+     * finalizes a document — its sign-off is what closes out every other
+     * stage's Admin-review requirement (see WorkflowService.php:799-891).
+     * So "who approved this" means every Head Approver who resolved THAT
+     * stage, not whichever single assignment happened to be acted on last
+     * across the document.
      */
     private function resolveDecision(DocumentRepository $doc): array
     {
         if ($doc->is_legacy_import) {
-            return ['by' => 'Admin (Legacy Import)', 'at' => $doc->upload_date];
+            return ['by' => [['name' => 'Admin (Legacy Import)', 'role' => null]], 'at' => $doc->upload_date];
         }
 
-        $wantStatus = $doc->global_status === 'rejected' ? 'rejected' : 'approved';
+        if ($doc->global_status === 'rejected') {
+            $rejecters = $doc->assignments
+                ->where('individual_status', 'rejected')
+                ->whereNull('cascade_closed_by');
 
-        $decisive = $doc->assignments
-            ->where('individual_status', $wantStatus)
-            ->when($wantStatus === 'rejected', fn ($c) => $c->filter(
-                fn (DocumentAssignment $a) => is_null($a->cascade_closed_by)
-            ))
-            ->sortByDesc('acted_at')
-            ->first();
+            if ($rejecters->isEmpty()) {
+                return ['by' => [['name' => '—', 'role' => null]], 'at' => null];
+            }
 
-        if (! $decisive) {
-            return ['by' => '—', 'at' => null];
+            return [
+                'by' => $rejecters->map(fn (DocumentAssignment $a) => [
+                    'name' => $a->approver->full_name ?? '—',
+                    'role' => $a->approver?->displayRole(),
+                ])->values()->all(),
+                'at' => $rejecters->max('acted_at'),
+            ];
         }
 
-        if ($decisive->admin_override_by) {
-            return ['by' => 'Admin Override', 'at' => $decisive->admin_override_at];
+        $finalSeats = $doc->assignments
+            ->filter(fn (DocumentAssignment $a) => $a->stage?->stage_name === 'Final Approval')
+            ->whereIn('individual_status', ['approved', 'auto_approved']);
+
+        // Every document routed through the real workflow gets a Final
+        // Approval seat (confirmed 2026-10-01: every configured category's
+        // stage list ends in it) — but older/seeded records can be
+        // 'approved' without ever having one (verified against this app's
+        // own local data: a demo document whose only assignment sits on an
+        // earlier stage, yet is globally 'approved'). Falling back to every
+        // approved seat on the document, rather than showing nothing,
+        // means that data still displays something real instead of
+        // silently going blank.
+        if ($finalSeats->isEmpty()) {
+            $finalSeats = $doc->assignments->whereIn('individual_status', ['approved', 'auto_approved']);
         }
 
-        if ($decisive->auto_approved) {
-            return ['by' => 'System Auto-Approval', 'at' => $decisive->acted_at];
+        if ($finalSeats->isEmpty()) {
+            return ['by' => [['name' => '—', 'role' => null]], 'at' => null];
         }
 
-        return ['by' => $decisive->approver->full_name ?? '—', 'at' => $decisive->acted_at];
+        // Admin override / full auto-approval still take priority over
+        // listing individual approvers — these are one specific action,
+        // not a vote, same special-casing the old single-value logic had.
+        $overridden = $finalSeats->first(fn (DocumentAssignment $a) => $a->admin_override_by);
+        if ($overridden) {
+            return ['by' => [['name' => 'Admin Override', 'role' => null]], 'at' => $overridden->admin_override_at];
+        }
+
+        if ($finalSeats->every(fn (DocumentAssignment $a) => $a->auto_approved)) {
+            return ['by' => [['name' => 'System Auto-Approval', 'role' => null]], 'at' => $finalSeats->max('acted_at')];
+        }
+
+        return [
+            'by' => $finalSeats->map(fn (DocumentAssignment $a) => [
+                'name' => $a->approver->full_name ?? '—',
+                'role' => $a->approver?->displayRole(),
+            ])->values()->all(),
+            'at' => $finalSeats->max('acted_at'),
+        ];
     }
 
     /**
@@ -1963,6 +2079,12 @@ class AdminController extends Controller
 
         $totalCount = (clone $query)->count();
 
+        // Feature: client-side row fitting — see resources/js/app.js's
+        // initFittedPagination() and AdminController::documents()'s
+        // matching docblock. Every matching document is sent in one
+        // response now (previously a fixed 5-per-page LengthAwarePaginator,
+        // unrelated to actual screen size); the browser measures the whole
+        // list and works out every page's real boundary itself.
         $documents = (clone $query)
             ->with(['document', 'assignment'])
             ->get()
@@ -1976,20 +2098,9 @@ class AdminController extends Controller
             ->sortByDesc('firstViolatedAt')
             ->values();
 
-        $page = $request->integer('admin_page', 1);
-        $perPage = 5;
-        $paginated = new LengthAwarePaginator(
-            $documents->forPage($page, $perPage)->values(),
-            $documents->count(),
-            $perPage,
-            $page,
-            ['path' => route('admin.sla.violations'), 'pageName' => 'admin_page']
-        );
-        $paginated->appends($request->except('admin_page'));
-
         return [
             'adminViolationTotal' => $totalCount,
-            'adminViolations' => $paginated,
+            'adminViolations' => $documents,
         ];
     }
 

@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Set a New Password — DocTrack</title>
+    <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+    <link rel="icon" type="image/png" href="{{ asset('images/logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&display=swap" rel="stylesheet">
@@ -15,7 +18,7 @@
 
     <div class="w-full max-w-sm relative">
         <div class="text-center mb-8">
-            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 mx-auto flex items-center justify-center font-bold text-white text-2xl shadow-elevated ring-1 ring-white/20">D</div>
+            <img src="{{ asset('images/logo.png') }}" alt="DocTrack logo" class="w-14 h-14 rounded-2xl mx-auto shadow-elevated ring-1 ring-white/20 object-cover">
             <h1 class="mt-5 text-xl font-semibold text-white tracking-tight">Set a New Password</h1>
         </div>
 

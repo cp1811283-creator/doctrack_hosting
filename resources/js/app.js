@@ -669,6 +669,42 @@ function sizeCappedCard(cardEl) {
 window.sizeCappedCard = sizeCappedCard;
 
 /**
+ * Shrinks/grows the folder tiles on a "Browse by Category" grid (Archive,
+ * SLA Violation Reports) to exactly fill whatever vertical space is left
+ * below the grid's own top edge — no internal scrollbar, no static h-64
+ * guess that overflows the page once the grid needs more room than that
+ * (more categories, or a larger font size growing whatever sits above it).
+ * Same live-measurement technique as sizeCappedCard()/sizeRecentActivity(),
+ * applied per-row instead of to one box: height is divided evenly across
+ * however many rows the fixed 2-column grid works out to, minus the fixed
+ * tab height and the gaps between rows, then applied to every tile body.
+ * Deliberately no floor — see sizeRecentActivity() in admin/dashboard.
+ * blade.php for why a floor that can exceed real available space is
+ * exactly the bug this (and that) exists to avoid.
+ *
+ * @param {HTMLElement} gridEl - the `.folder-grid` element (a `grid grid-cols-2` box)
+ */
+function sizeFolderGrid(gridEl) {
+    const mainEl = document.querySelector('main');
+    if (!gridEl || !mainEl) return;
+
+    const tabs = gridEl.querySelectorAll('.folder-tile-tab');
+    const bodies = gridEl.querySelectorAll('.folder-tile-body');
+    if (!bodies.length) return;
+
+    const rows = Math.ceil(bodies.length / 2);
+    const rowGap = parseFloat(getComputedStyle(gridEl).rowGap) || 0;
+    const tabHeight = tabs[0] ? tabs[0].getBoundingClientRect().height : 0;
+    const mainPaddingBottom = parseFloat(getComputedStyle(mainEl).paddingBottom) || 0;
+    const available = mainEl.getBoundingClientRect().bottom - mainPaddingBottom - gridEl.getBoundingClientRect().top;
+
+    const perRow = (available - (rows - 1) * rowGap) / rows;
+    const bodyHeight = Math.max(perRow - tabHeight, 0);
+    bodies.forEach((body) => { body.style.height = bodyHeight + 'px'; });
+}
+window.sizeFolderGrid = sizeFolderGrid;
+
+/**
  * Client-side "fitted" pagination (Feature: a long list is paged by
  * however many rows genuinely fit the device's real screen space, not a
  * fixed guessed count). Two earlier approaches — a single-shot height

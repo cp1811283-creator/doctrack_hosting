@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\DocumentRepository;
-use App\Models\DocumentRevision;
 use App\Models\DocumentReviewSession;
+use App\Models\DocumentRevision;
 use App\Models\SubmissionBatch;
 use App\Models\User;
 use App\Models\WorkflowStage;
@@ -14,6 +14,8 @@ use App\Services\ValidationService;
 use App\Services\WorkflowService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -21,9 +23,7 @@ use Throwable;
 
 class DocumentController extends Controller
 {
-    public function __construct(private WorkflowService $workflow)
-    {
-    }
+    public function __construct(private WorkflowService $workflow) {}
 
     /**
      * The originator's filtered/paginated submissions query — shared by
@@ -38,7 +38,7 @@ class DocumentController extends Controller
             ->with(['currentAssignment.stage', 'assignments.stage', 'batch']);
 
         if ($request->filled('document')) {
-            $query->where('title', 'like', '%' . $request->string('document') . '%');
+            $query->where('title', 'like', '%'.$request->string('document').'%');
         }
         if ($request->filled('status')) {
             $query->where('global_status', $request->string('status'));
@@ -131,7 +131,7 @@ class DocumentController extends Controller
         $fileAttributeNames = [];
         foreach ($request->file('files', []) as $index => $file) {
             if ($file) {
-                $fileAttributeNames["files.{$index}"] = "'" . $file->getClientOriginalName() . "'";
+                $fileAttributeNames["files.{$index}"] = "'".$file->getClientOriginalName()."'";
             }
         }
 
@@ -140,19 +140,20 @@ class DocumentController extends Controller
             'files.*' => [
                 'file',
                 'mimes:pdf,docx,doc,txt,png,jpg,jpeg',
-                new ReliableMimeType(),
+                new ReliableMimeType,
                 'max:20480',
             ],
             'due_date' => ['required', 'date', function ($attribute, $value, $fail) {
                 $buffer = config('sla.min_due_date_buffer_minutes', 15);
                 if (Carbon::parse($value)->lt(now()->addMinutes($buffer))) {
                     $fail("The due date must be at least {$buffer} minutes from now.");
+
                     return;
                 }
                 // Section 1 (extended): reject a due date outside working
                 // hours/days outright rather than silently moving it — see
                 // WorkflowService::isDueDateWithinWorkingHours()'s docblock.
-                if (!$this->workflow->isDueDateWithinWorkingHours($value)) {
+                if (! $this->workflow->isDueDateWithinWorkingHours($value)) {
                     $fail('The due date must fall within working hours (9 AM–5 PM, Mon–Sat, excluding holidays). Please pick a valid date and time.');
                 }
             }],
@@ -185,8 +186,23 @@ class DocumentController extends Controller
         // 5 files show up, with no explanation and a raw 500 page.
         $documents = collect();
         $failedFiles = [];
+        $duplicateFiles = [];
 
         foreach ($validated['files'] as $file) {
+            // Server-side backstop (confirmed 2026-10-01 in production —
+            // two separate documents for the same file, 3 seconds apart)
+            // behind the client-side double-click guard on the Submit
+            // button (see dashboard.blade.php) — catches whatever that
+            // guard can't, e.g. a replayed request. Same originator, same
+            // original filename and byte size, uploaded moments ago: that's
+            // the same physical upload landing twice, not two genuinely
+            // different documents the originator meant to submit.
+            if ($this->isRecentDuplicateSubmission($request->user()->user_id, $file)) {
+                $duplicateFiles[] = $file->getClientOriginalName();
+
+                continue;
+            }
+
             try {
                 $documents->push($this->workflow->ingest(
                     $file, $request->user(), $effectiveDueDate->toDateTimeString(), $batch->batch_id, null, $requiresPrinting, $routingMode
@@ -201,28 +217,54 @@ class DocumentController extends Controller
             }
         }
 
-        $status = $this->buildSubmissionStatusMessage($documents, $failedFiles);
+        $status = $this->buildSubmissionStatusMessage($documents, $failedFiles, $duplicateFiles);
 
         return redirect()
             ->route('originator.dashboard')
             ->with('status', $status);
     }
 
-    private function buildSubmissionStatusMessage($documents, array $failedFiles = []): string
+    /**
+     * @param  UploadedFile  $file
+     */
+    private function isRecentDuplicateSubmission(int $originatorId, $file): bool
+    {
+        $recentMatch = DocumentRepository::where('originator_id', $originatorId)
+            ->where('original_filename', $file->getClientOriginalName())
+            ->where('upload_date', '>=', now()->subSeconds(10))
+            ->latest('upload_date')
+            ->first();
+
+        if (! $recentMatch || ! Storage::exists($recentMatch->file_path)) {
+            return false;
+        }
+
+        return Storage::size($recentMatch->file_path) === $file->getSize();
+    }
+
+    private function buildSubmissionStatusMessage($documents, array $failedFiles = [], array $duplicateFiles = []): string
     {
         $failureNote = $failedFiles
-            ? ' ' . count($failedFiles) . ' file(s) hit an unexpected error and were not uploaded (' .
-                implode(', ', $failedFiles) . ') — please try re-uploading just those.'
+            ? ' '.count($failedFiles).' file(s) hit an unexpected error and were not uploaded ('.
+                implode(', ', $failedFiles).') — please try re-uploading just those.'
+            : '';
+        $duplicateNote = $duplicateFiles
+            ? ' '.count($duplicateFiles).' file(s) matched a submission from moments ago and were skipped as a likely duplicate ('.
+                implode(', ', $duplicateFiles).').'
             : '';
 
         if ($documents->isEmpty()) {
-            return 'Your upload could not be processed due to an unexpected error. Please try again.' . $failureNote;
+            if ($duplicateFiles && ! $failedFiles) {
+                return 'This looks like a duplicate of your last submission — nothing new was uploaded.'.$duplicateNote;
+            }
+
+            return 'Your upload could not be processed due to an unexpected error. Please try again.'.$failureNote.$duplicateNote;
         }
 
         if ($documents->count() === 1) {
             $document = $documents->first();
-            if (!$document->is_validated) {
-                return "'{$document->title}' uploaded but failed validation — see details below." . $failureNote;
+            if (! $document->is_validated) {
+                return "'{$document->title}' uploaded but failed validation — see details below.".$failureNote.$duplicateNote;
             }
             // "classified as X" reads fine for a real category, but odd
             // for a document marked Other ("classified as Other") — see
@@ -240,15 +282,15 @@ class DocumentController extends Controller
             // known true here.
             return ($document->pending_custom_routing_at
                 ? "'{$document->title}' uploaded and {$categoryPhrase} — select the approver(s) you'd like to route it to."
-                : "'{$document->title}' uploaded, {$categoryPhrase}, and routed for approval.") . $failureNote;
+                : "'{$document->title}' uploaded, {$categoryPhrase}, and routed for approval.").$failureNote.$duplicateNote;
         }
 
         $failedValidation = $documents->reject(fn ($d) => $d->is_validated)->count();
         $awaitingSelection = $documents->filter(fn ($d) => $d->pending_custom_routing_at)->count();
 
-        return "{$documents->count()} documents uploaded together." .
-            ($awaitingSelection > 0 ? " {$awaitingSelection} need you to select approver(s) before routing." : ' Routed as one approval request.') .
-            ($failedValidation > 0 ? " {$failedValidation} failed validation — see details below." : '') . $failureNote;
+        return "{$documents->count()} documents uploaded together.".
+            ($awaitingSelection > 0 ? " {$awaitingSelection} need you to select approver(s) before routing." : ' Routed as one approval request.').
+            ($failedValidation > 0 ? " {$failedValidation} failed validation — see details below." : '').$failureNote.$duplicateNote;
     }
 
     public function show(Request $request, DocumentRepository $document)
@@ -355,7 +397,7 @@ class DocumentController extends Controller
             ->map(fn (WorkflowStage $stage) => (object) [
                 'stage' => $stage,
                 'approvers' => $this->workflow->eligibleApproversForStage($document->ml_category, $stage)
-                    ->sortBy(fn (User $a) => ($a->level === 'head' ? '0_' : '1_') . $a->full_name)->values(),
+                    ->sortBy(fn (User $a) => ($a->level === 'head' ? '0_' : '1_').$a->full_name)->values(),
             ])
             // A stage nobody is currently eligible for has nothing to pick
             // here — omitted rather than shown as an empty, unpickable group.
@@ -377,15 +419,15 @@ class DocumentController extends Controller
      * stage," exactly that person). Used by selectApprovers()'s
      * 'unrelated' branch.
      *
-     * @param  \Illuminate\Support\Collection<int, User>  $approvers
+     * @param  Collection<int, User>  $approvers
      */
-    private function groupApproversByDepartment($approvers): \Illuminate\Support\Collection
+    private function groupApproversByDepartment($approvers): Collection
     {
         $approvers->each(fn (User $approver) => $approver->stages_label = $this->stagesLabelFor($approver));
 
         return $approvers
             ->groupBy(fn (User $approver) => $approver->department ?: 'No Department')
-            ->map(fn ($group) => $group->sortBy(fn (User $a) => ($a->level === 'head' ? '0_' : '1_') . $a->full_name)->values())
+            ->map(fn ($group) => $group->sortBy(fn (User $a) => ($a->level === 'head' ? '0_' : '1_').$a->full_name)->values())
             ->sortKeys();
     }
 
@@ -407,7 +449,7 @@ class DocumentController extends Controller
      */
     private function stagesLabelFor(User $approver): string
     {
-        if (!$approver->assigned_category) {
+        if (! $approver->assigned_category) {
             return 'No category assigned';
         }
 
@@ -502,14 +544,15 @@ class DocumentController extends Controller
         abort_unless(in_array($document->global_status, ['rejected', 'processing'], true), 409, 'Only a rejected or failed-validation document can be resubmitted.');
 
         $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType(), 'max:20480'],
+            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:20480'],
             'due_date' => ['required', 'date', function ($attribute, $value, $fail) {
                 $buffer = config('sla.min_due_date_buffer_minutes', 15);
                 if (Carbon::parse($value)->lt(now()->addMinutes($buffer))) {
                     $fail("The due date must be at least {$buffer} minutes from now.");
+
                     return;
                 }
-                if (!$this->workflow->isDueDateWithinWorkingHours($value)) {
+                if (! $this->workflow->isDueDateWithinWorkingHours($value)) {
                     $fail('The due date must fall within working hours (9 AM–5 PM, Mon–Sat, excluding holidays). Please pick a valid date and time.');
                 }
             }],

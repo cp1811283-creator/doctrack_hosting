@@ -56,7 +56,7 @@
                     <div class="px-3 py-1.5 text-xs">
                         <p class="font-medium text-surface-800">{{ $session->user->full_name ?? 'Unknown' }}</p>
                         <p class="text-[10px] text-surface-400">
-                            {{ ucfirst($session->user->role ?? '') }}
+                            {{ $session->user?->displayRole() ?? '' }}
                             @if($session->user->assigned_category) &middot; {{ $session->user->assigned_category }} @endif
                         </p>
                     </div>

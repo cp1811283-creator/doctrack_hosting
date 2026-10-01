@@ -27,28 +27,29 @@ function paginationDoc(User $originator, array $overrides = []): DocumentReposit
     ], $overrides));
 }
 
-it('renders the custom Tailwind pagination view (not the unstyled vendor default)', function () {
+it('sends every document in one response for the Archive (Feature: client-side fitted pagination)', function () {
+    // Archive used to be server-side ->paginate()'d at a fixed 5 (Admin)
+    // or 10 (Approver/Originator) per page regardless of actual screen
+    // size — replaced with the same client-side fitted pagination every
+    // other list in this app already uses (see resources/js/app.js's
+    // initFittedPagination()). The server always sends the full matching
+    // list now; the pagination nav is built entirely by JS after load, so
+    // the only thing left to verify at the HTTP layer is that the server
+    // never truncates and that nav never appears in the raw HTML.
     $admin = User::factory()->admin()->create();
+    $docs = [];
     for ($i = 0; $i < 6; $i++) {
-        paginationDoc($admin);
+        $docs[] = paginationDoc($admin);
     }
 
     $response = $this->actingAs($admin)->get(route('admin.archive', ['category' => 'Job Order']));
 
     $response->assertOk();
-    $response->assertSee('Pagination Navigation', false); // aria-label unique to resources/views/vendor/pagination/custom.blade.php
-});
-
-it('paginates Admin Archive at 5 per page, Approver/Originator Archive at 10', function () {
-    $admin = User::factory()->admin()->create();
-    $approver = User::factory()->approver('Job Order')->create();
-    for ($i = 0; $i < 6; $i++) {
-        paginationDoc($admin);
+    foreach ($docs as $doc) {
+        $response->assertSee($doc->title);
     }
-
-    $this->actingAs($admin)->get(route('admin.archive', ['category' => 'Job Order']))->assertSee('Next');
-    // 6th item pushes admin (5/page) into a second page but not approver (10/page).
-    $this->actingAs($approver)->get(route('approver.archive'))->assertDontSee('Next');
+    $response->assertDontSee('Next');
+    $response->assertDontSee('Pagination Navigation', false);
 });
 
 it('sends every account in one response for the Admin Users list (Feature: client-side fitted pagination)', function () {
@@ -208,13 +209,15 @@ it('sends every document in one response for the Originator "Upload & Track Docu
     $response->assertDontSee('Next');
 });
 
-it('paginates Admin Violations at 5 per page', function () {
+it('sends every Admin Violation in one response (Feature: client-side fitted pagination)', function () {
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
     $stage = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Review', 'sequence_order' => 1]);
 
+    $titles = [];
     for ($i = 0; $i < 6; $i++) {
         $doc = paginationDoc($originator, ['global_status' => 'auto_approved']);
+        $titles[] = $doc->title;
         $assignment = DocumentAssignment::create([
             'document_id' => $doc->document_id, 'user_id' => null,
             'stage_id' => $stage->stage_id, 'due_date' => $doc->due_date,
@@ -228,7 +231,11 @@ it('paginates Admin Violations at 5 per page', function () {
     }
 
     $response = $this->actingAs($admin)->get(route('admin.sla.violations', ['category' => 'Job Order']));
-    $response->assertOk()->assertSee('Next');
+    $response->assertOk();
+    foreach ($titles as $title) {
+        $response->assertSee($title);
+    }
+    $response->assertDontSee('Next');
 });
 
 it('paginates Decision History at 10 per page (unchanged)', function () {

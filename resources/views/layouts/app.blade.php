@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@yield('title', 'Document Classification & Tracking System')</title>
+    <title>@yield('title', 'DocTrack — Document Classification & Tracking System')</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+    <link rel="icon" type="image/png" href="{{ asset('images/logo.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
     <script>
         // Stashes and immediately clears a "#document-N" URL fragment
         // (Feature: notification click centers the document — see
@@ -92,7 +95,7 @@
     <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-64 h-full flex flex-col bg-gradient-to-b from-primary-900 to-primary-950 text-primary-100 transform -translate-x-full transition-transform duration-300 ease-in-out">
         <div class="flex items-center justify-between gap-2 px-6 h-16 border-b border-white/10">
             <div class="flex items-center gap-2.5">
-                <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center font-bold text-white shadow-sm ring-1 ring-white/20 flex-shrink-0">D</div>
+                <img src="{{ asset('images/logo.png') }}" alt="DocTrack logo" class="w-8 h-8 rounded-lg shadow-sm ring-1 ring-white/20 flex-shrink-0 object-cover">
                 <span class="font-semibold text-white tracking-tight text-[15px] whitespace-nowrap">DocTrack</span>
             </div>
             <button id="sidebar-close" type="button" class="p-1 rounded-lg text-primary-300 hover:text-white hover:bg-white/5 flex-shrink-0" aria-label="Close menu">
@@ -121,7 +124,7 @@
                 </div>
                 <div class="flex-1 min-w-0">
                     <p class="text-sm font-medium text-white truncate">{{ auth()->user()->full_name }}</p>
-                    <p class="text-xs text-primary-300 capitalize">{{ auth()->user()->role }}</p>
+                    <p class="text-xs text-primary-300">{{ auth()->user()->displayRole() }}</p>
                 </div>
                 <form method="POST" action="{{ route('logout') }}">
                     @csrf
@@ -209,7 +212,12 @@
             </div>
         @endauth
 
-        <main class="flex-1 overflow-y-auto scroll-smooth p-4 sm:p-8 space-y-6">
+        {{-- Feature: tighter top gap so every page's content sits closer to
+             the header bar — pt-2/sm:pt-4 (roughly half the old p-4/sm:p-8
+             top padding) instead of one uniform `p-*` on all sides, so the
+             left/right/bottom breathing room every page already relies on
+             stays untouched. --}}
+        <main class="flex-1 overflow-y-auto scroll-smooth pt-2 px-4 pb-4 sm:pt-4 sm:px-8 sm:pb-8 space-y-6">
             @if(session('status'))
                 <div class="rounded-xl bg-approved-50 border border-approved-500/25 text-approved-700 px-4 py-3 text-sm font-medium shadow-sm flex items-center gap-2.5 transition-opacity duration-300" role="status">
                     <svg class="w-5 h-5 flex-shrink-0 text-approved-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>

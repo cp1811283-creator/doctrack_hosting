@@ -12,10 +12,15 @@
     Review page (that action reviews every pending stage on a document
     at once, so one badge per document is what actually matches it).
 --}}
-<div class="px-6 py-3 border-b border-surface-200 bg-surface-50/50">
+<div class="px-6 py-3 border-b border-surface-200 bg-surface-50/50 flex-shrink-0">
     <p class="text-sm text-surface-500">{{ $adminViolationTotal }} total in this category — an auto-approved document whose grace period for Admin review has passed without Admin confirming or disputing it.</p>
 </div>
 
+{{-- Feature: client-side "fitted" pagination — see resources/js/app.js's
+     initFittedPagination(). flex-1 + overflow-hidden here is what that JS
+     measures against to decide how many rows actually fit, hiding the
+     rest — same pattern as admin/partials/documents-results.blade.php. --}}
+<div class="flex-1 overflow-y-hidden js-adaptive-rows-area">
 <ul class="divide-y divide-surface-100">
     @forelse($adminViolations as $item)
         @php
@@ -24,7 +29,11 @@
             // unreviewed, not just that its (earlier) review window did.
             $isPastDue = $item->isOpen && $item->document && $item->document->due_date && $item->document->due_date->isPast();
         @endphp
-        <li>
+        {{-- data-row-group gives initFittedPagination() a distinct fitting
+             group per row (see admin/partials/audit-row.blade.php for the
+             identical convention) — falls back to the loop index for the
+             rare case a document was later deleted. --}}
+        <li class="admin-violation-row" data-row-group="{{ $item->document->document_id ?? $loop->index }}">
             {{-- The whole row is clickable, not just the title — jumps
                  straight to this document's card on the Auto-Approval
                  Review page (see AdminController::slaQueueData()'s
@@ -81,7 +90,10 @@
         <li class="px-6 py-8 text-center text-sm text-surface-400">No Admin violations recorded.</li>
     @endforelse
 </ul>
+</div>
 
-@if($adminViolations->hasPages())
-    <div class="px-6 py-3 border-t border-surface-100">{{ $adminViolations->links() }}</div>
-@endif
+{{-- Built entirely by initFittedPagination() — not Laravel's own
+     ->links(), since the whole list is already in the DOM above and
+     $adminViolations is a plain Collection now, not a real
+     LengthAwarePaginator. --}}
+<div id="admin-violations-results-pagination" class="px-6 py-3 border-t border-surface-100 flex-shrink-0"></div>

@@ -2,13 +2,15 @@
     Extracted from archive/index.blade.php so ArchiveController::refresh()
     can return exactly this fragment for the live-search JS to swap in,
     without re-rendering the whole page (filter bar, sidebar, layout).
-    Expects: $documents, $isOwnSubmissionsView.
+    Expects: $documents (a plain Collection — see initFittedPagination()
+    in archive/index.blade.php for why this is no longer a real
+    LengthAwarePaginator), $isOwnSubmissionsView.
 --}}
-<div class="bg-white rounded-xl shadow-card border border-surface-200 overflow-hidden">
-    <div class="px-6 py-4 border-b border-surface-200 flex items-center justify-between">
+<div class="bg-white rounded-xl shadow-card border border-surface-200 overflow-hidden flex flex-col flex-1 min-h-0">
+    <div class="px-6 py-4 border-b border-surface-200 flex items-center justify-between flex-shrink-0">
         <div class="flex items-baseline gap-2">
             <h2 class="text-sm font-semibold text-surface-900">Approved Documents</h2>
-            <span class="text-xs text-surface-400 tabular-nums">{{ $documents->total() }} total</span>
+            <span class="text-xs text-surface-400 tabular-nums">{{ $documents->count() }} total</span>
         </div>
         @if(auth()->user()->isAdmin())
             {{-- Feature: "+ Import Legacy Document" as a button + popup
@@ -29,17 +31,27 @@
     @if($isOwnSubmissionsView)
         <p class="px-6 pt-3 text-xs text-surface-400">Showing only documents you submitted, across all categories.</p>
     @endif
-    <div class="overflow-x-auto">
-    <table class="w-full text-sm">
+    {{-- flex-1 + overflow-hidden here (not on the pagination div below) —
+         the parent #archive-results is capped to the device's screen
+         height (see archive/index.blade.php); this is what
+         resources/js/app.js's initFittedPagination() measures against to
+         decide how many rows actually fit, hiding the rest. table-fixed +
+         explicit widths (same reasoning as admin/partials/audit-results.
+         blade.php, fixed 2026-10-01) — table-auto would let column widths
+         depend on however many rows the fitting measurement pass happens
+         to unhide at once, undercounting badly once there's enough
+         archived documents for that to matter. --}}
+    <div class="overflow-x-auto flex-1 overflow-y-hidden js-adaptive-rows-area">
+    <table class="w-full min-w-[720px] text-sm table-fixed">
         <thead class="bg-surface-50 text-surface-500 text-xs uppercase tracking-wide">
             <tr>
-                <th class="text-left px-4 py-3 font-medium">Document</th>
-                <th class="text-left px-4 py-3 font-medium">Category</th>
-                <th class="text-left px-4 py-3 font-medium">Originator</th>
-                <th class="text-left px-4 py-3 font-medium">Uploaded</th>
-                <th class="text-left px-4 py-3 font-medium">Approved</th>
-                <th class="text-left px-4 py-3 font-medium">Due Date</th>
-                <th class="px-4 py-3"></th>
+                <th class="text-left px-4 py-3 font-medium w-[22%]">Document</th>
+                <th class="text-left px-4 py-3 font-medium w-[12%]">Category</th>
+                <th class="text-left px-4 py-3 font-medium w-[12%]">Originator</th>
+                <th class="text-left px-4 py-3 font-medium w-[15%]">Uploaded</th>
+                <th class="text-left px-4 py-3 font-medium w-[15%]">Approved</th>
+                <th class="text-left px-4 py-3 font-medium w-[15%]">Due Date</th>
+                <th class="px-4 py-3 w-[9%]"></th>
             </tr>
         </thead>
         <tbody class="divide-y divide-surface-100">
@@ -54,7 +66,10 @@
                         ->whereIn('individual_status', ['approved', 'auto_approved'])
                         ->max('acted_at') ?? $doc->updated_at;
                 @endphp
-                <tr class="hover:bg-surface-50 transition-colors cursor-pointer"
+                {{-- data-row-group gives initFittedPagination() a distinct
+                     fitting group per row (see admin/partials/audit-row.
+                     blade.php for the identical convention). --}}
+                <tr class="archive-row hover:bg-surface-50 transition-colors cursor-pointer" data-row-group="{{ $doc->document_id }}"
                     onclick="openKpiDrilldown('document-tracker', '{{ addslashes($doc->title) }}', '{{ route('documents.trackerModal', $doc) }}')">
                     <td class="px-4 py-3 font-medium text-surface-800 max-w-xs truncate">
                         {{-- Feature: opens the shared Document Tracker
@@ -108,7 +123,11 @@
         </tbody>
     </table>
     </div>
-    @if($documents->hasPages())
-        <div class="px-6 py-4 border-t border-surface-200">{{ $documents->links() }}</div>
-    @endif
+    {{-- Feature: client-side "fitted" pagination — see resources/js/app.js's
+         initFittedPagination() for the full mechanism. Not Laravel's own
+         $documents->links() — the whole list is already in the DOM above
+         (no server-side page size at all now), and this container is
+         entirely built by that JS using the exact same original nav look
+         as resources/views/vendor/pagination/tailwind.blade.php. --}}
+    <div id="archive-results-pagination" class="px-6 py-4 border-t border-surface-200 flex-shrink-0"></div>
 </div>

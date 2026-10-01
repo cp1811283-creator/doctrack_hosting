@@ -76,13 +76,28 @@
                                 </span>
                                 <br>
                             @endif
-                            <span class="text-xs font-medium {{ $u->isAvailable() ? 'text-approved-700' : 'text-surface-400' }}">
-                                {{ $u->isAvailable() ? 'Available' : 'Not Available' }}
+                        @elseif($u->role === 'originator')
+                            <br>
+                            {{-- Every Originator is Staff-tier — there's no Head-Originator
+                                 concept, so this pill is unconditional, not read from $u->level
+                                 the way Approver's is (see User::displayRole()'s docblock).
+                                 Same grey "Staff" pill styling as Approver's, for consistency. --}}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-surface-100 text-surface-600 ring-1 ring-inset ring-surface-500/20">
+                                Staff
                             </span>
+                            <br>
                         @else
                             <br>
-                            <span class="text-xs text-surface-400">&mdash;</span>
                         @endif
+                        {{-- isAvailable() (is_active && isOnline()) is role-agnostic — every
+                             logged-in user sends the same presence heartbeat. This page already
+                             has its own separate Active/Inactive Status column, so unlike the
+                             All Users drilldown (which has no such column) there's no need to
+                             fold "Deactivated" in here too — just real online status for every
+                             role, matching what Approver rows already showed. --}}
+                        <span class="text-xs font-medium {{ $u->isAvailable() ? 'text-approved-700' : 'text-surface-400' }}">
+                            {{ $u->isAvailable() ? 'Available' : 'Not Available' }}
+                        </span>
                     </td>
                     <td class="px-3 py-3">
                         @if($u->role === 'approver' && $u->department)

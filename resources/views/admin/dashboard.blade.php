@@ -94,16 +94,16 @@
 
         const mainPaddingBottom = parseFloat(getComputedStyle(mainEl).paddingBottom) || 0;
         const available = mainEl.getBoundingClientRect().bottom - mainPaddingBottom - scrollEl.getBoundingClientRect().top;
-        // Floor is deliberately low (not a "comfortable minimum" like
-        // Document Tracker's 200px) — this row sits below a taller,
-        // already-compacted Analytics/SLA/Category row, so there just
-        // isn't much slack to spare on a short screen. A shorter-than-
-        // ideal scroll area here is still strictly better than forcing
-        // the whole page to overflow, which a higher floor did exactly
-        // that on a real 900px-tall viewport (measured directly, not
-        // guessed) — the floor must never win an argument with the
-        // actual available space.
-        scrollEl.style.maxHeight = Math.max(available - 8, 90) + 'px';
+        // No floor — a floor here previously forced the whole page to
+        // overflow whenever real available space dropped below it (e.g.
+        // at a larger font size, where the Analytics/SLA/Category row
+        // above grows taller and leaves less room down here). A shorter-
+        // than-ideal scroll area is still strictly better than that, so
+        // this always yields to whatever space is actually left, down to
+        // 0 — confirmed via direct measurement (larger font: 907px page
+        // content vs 816px available dropped to 0px overflow once the
+        // floor was removed).
+        scrollEl.style.maxHeight = Math.max(available - 8, 0) + 'px';
     }
 
     // The Auto-Approval Alerts column (see overview.blade.php's matching
@@ -237,9 +237,16 @@
             const crosshair = svg.querySelector('.analytics-crosshair');
             if (crosshair) { crosshair.setAttribute('x1', point.x); crosshair.setAttribute('x2', point.x); }
 
-            ['uploaded', 'approved', 'rejected'].forEach((key) => {
+            ['uploaded', 'approved', 'autoapproved', 'rejected'].forEach((key) => {
                 const dot = svg.querySelector(`.analytics-hover-dot-${key}`);
-                if (dot) { dot.setAttribute('cx', point.x); dot.setAttribute('cy', point[`${key}Y`]); }
+                // 'autoapproved' (all-lowercase, matching the CSS class
+                // naming convention the other 3 dots use) reads its value
+                // off the camelCase 'autoApproved'/'autoApprovedY' keys in
+                // the point payload (see analytics-panel.blade.php's
+                // $jsPoints) — the other 3 keys already match their class
+                // name exactly, only this one needs the explicit lookup.
+                const dataKey = key === 'autoapproved' ? 'autoApproved' : key;
+                if (dot) { dot.setAttribute('cx', point.x); dot.setAttribute('cy', point[`${dataKey}Y`]); }
             });
 
             const readout = svg.closest('.analytics-panel-content')?.querySelector('[data-analytics-readout]');
@@ -247,6 +254,7 @@
             readout.querySelector('[data-readout-date]').textContent = point.bucket;
             readout.querySelector('[data-readout-uploaded]').textContent = point.uploaded;
             readout.querySelector('[data-readout-approved]').textContent = point.approved;
+            readout.querySelector('[data-readout-autoapproved]').textContent = point.autoApproved;
             readout.querySelector('[data-readout-rejected]').textContent = point.rejected;
         }
 

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\DocumentAssignment;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
 /**
@@ -25,16 +26,15 @@ class PerformanceInsightsService
 
     private ?Collection $decisionsCache = null;
 
-    public function __construct(private BusinessHoursService $businessHours)
-    {
-    }
+    public function __construct(private BusinessHoursService $businessHours) {}
 
     public function fastestApprovers(int $limit = 10): Collection
     {
         return $this->rank(
             $this->decisions()->groupBy('user_id'),
             fn (Collection $rows) => $rows->first()->approver_name,
-            $limit
+            $limit,
+            roleFor: $this->approverRoleLabel(...)
         );
     }
 
@@ -68,7 +68,9 @@ class PerformanceInsightsService
         return $this->rank(
             $this->decisions()->groupBy('user_id'),
             fn (Collection $rows) => $rows->first()->approver_name,
-            $limit, true
+            $limit,
+            descending: true,
+            roleFor: $this->approverRoleLabel(...)
         );
     }
 
@@ -116,20 +118,26 @@ class PerformanceInsightsService
                 'document_assignments.acted_at',
                 'users.full_name as approver_name',
                 'users.department',
+                'users.level as approver_level',
                 'document_repository.ml_category',
             ])
             ->map(function ($row) {
                 $row->elapsed_seconds = $this->businessHours->businessSecondsRemaining(
-                    \Carbon\Carbon::parse($row->created_at),
-                    \Carbon\Carbon::parse($row->acted_at)
+                    Carbon::parse($row->created_at),
+                    Carbon::parse($row->acted_at)
                 );
 
                 return $row;
             });
     }
 
-    /** @param  \Closure(Collection): string  $labelFor */
-    private function rank(Collection $grouped, \Closure $labelFor, int $limit, bool $descending = false): Collection
+    /**
+     * @param  \Closure(Collection): string  $labelFor
+     * @param  ?\Closure(Collection): ?string  $roleFor  Only passed by the Approvers rankings — Departments/
+     *                                                   Categories have no per-row role concept, so 'role' stays
+     *                                                   null for those and the UI just doesn't render a role tag.
+     */
+    private function rank(Collection $grouped, \Closure $labelFor, int $limit, bool $descending = false, ?\Closure $roleFor = null): Collection
     {
         return $grouped
             // Requires MIN_DECISIONS GENUINELY non-zero readings, not just
@@ -147,11 +155,26 @@ class PerformanceInsightsService
             ->map(fn (Collection $rows, $key) => [
                 'key' => $key,
                 'label' => $labelFor($rows),
+                'role' => $roleFor?->__invoke($rows),
                 'avg_seconds' => (int) round($rows->avg('elapsed_seconds')),
                 'decisions_count' => $rows->count(),
             ])
             ->when($descending, fn (Collection $c) => $c->sortByDesc('avg_seconds'), fn (Collection $c) => $c->sortBy('avg_seconds'))
             ->take($limit)
             ->values();
+    }
+
+    /**
+     * Mirrors User::displayRole()'s approver branch exactly (always
+     * "approver" role in this context — every row here is a real decision
+     * someone with an assignment made) — a user_id from a raw join
+     * row isn't a hydrated User model, so this can't just call
+     * $user->displayRole() without an extra query per distinct approver.
+     * Answers the "are Head Approvers mixed in with Staff Approvers here"
+     * question directly in the UI instead of leaving it invisible.
+     */
+    private function approverRoleLabel(Collection $rows): string
+    {
+        return $rows->first()->approver_level === 'head' ? 'Head Approver' : 'Staff Approver';
     }
 }

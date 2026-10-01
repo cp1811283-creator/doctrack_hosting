@@ -3,6 +3,7 @@
 use App\Models\ChatMessage;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Symfony\Component\Routing\Exception\RouteNotFoundException;
 
 /**
  * Coverage for the in-system chat (Feature: floating icon to message the
@@ -111,10 +112,10 @@ test('the thread header shows the other participant\'s name and role', function 
     $approver = User::factory()->approver('Job Order')->create(['full_name' => 'Vinz Lessur']);
 
     $asApprover = $this->actingAs($approver)->get(route('chat.refresh'));
-    $asApprover->assertOk()->assertSee($admin->full_name . ' (Admin)');
+    $asApprover->assertOk()->assertSee($admin->full_name.' (Admin)');
 
     $asAdmin = $this->actingAs($admin)->get(route('chat.refresh', ['with' => $approver->user_id]));
-    $asAdmin->assertOk()->assertSee('Vinz Lessur (Approver)');
+    $asAdmin->assertOk()->assertSee('Vinz Lessur (Staff Approver)');
 });
 
 test('a document tracker for one thread only ever shows messages between those two users', function () {
@@ -209,5 +210,5 @@ test('a chat image is only viewable by the two participants of that message', fu
 test('the busy-toggle route no longer exists', function () {
     $approver = User::factory()->approver('Job Order')->create();
 
-    expect(fn () => route('approver.availability.toggle'))->toThrow(\Symfony\Component\Routing\Exception\RouteNotFoundException::class);
+    expect(fn () => route('approver.availability.toggle'))->toThrow(RouteNotFoundException::class);
 });

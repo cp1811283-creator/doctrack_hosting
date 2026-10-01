@@ -61,7 +61,14 @@
     {{-- Admin Violations + Approvers side by side on wider screens (there's
          plenty of horizontal room once the old search/results list is
          gone), stacking back to full-width below lg so neither table gets
-         cramped on a narrower screen. --}}
+         cramped on a narrower screen. Wrapped in @unless($showFolders) (not
+         left to the two inner @if/@unless guards alone) — neither inner
+         card ever renders on the folder screen anyway (admin needs a
+         category, approver needs !$showFolders), so without this the grid
+         div itself still rendered empty, and space-y-6 on the parent still
+         gave it a top margin — pushing "Browse by Category" down by a full
+         empty row's worth of gap for no visible reason. --}}
+    @unless($showFolders)
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {{-- Admin Violations — only inside a category folder, scoped to
              just that category (see AdminController::adminViolationsData());
@@ -70,10 +77,16 @@
              — see admin-violations-results.blade.php for the per-document
              layout. --}}
         @if(request()->filled('category'))
-        <div class="bg-white rounded-xl shadow-card border border-surface-200 overflow-hidden">
-            <h2 class="px-6 py-4 text-sm font-semibold text-surface-900 border-b border-surface-200">Admin Violations</h2>
+        {{-- Capped to the device's own viewport height (Feature: pagination,
+             not scrolling, absorbs a long violations list) — see
+             resources/js/app.js's sizeCappedCard() docblock. id is on THIS
+             outer card, not #admin-violations-results, since that inner
+             div is what a live swap replaces (only its contents change on
+             refresh), matching the audit-card/audit-results pattern. --}}
+        <div id="admin-violations-card" class="bg-white rounded-xl shadow-card border border-surface-200 overflow-hidden flex flex-col">
+            <h2 class="px-6 py-4 text-sm font-semibold text-surface-900 border-b border-surface-200 flex-shrink-0">Admin Violations</h2>
 
-            <div id="admin-violations-results"
+            <div id="admin-violations-results" class="flex-1 min-h-0 flex flex-col"
                 data-refresh-url="{{ route('admin.sla.violations.admin.refresh', ['category' => request('category')]) }}"
                 data-poll-url="{{ route('admin.sla.violations.admin.poll', ['category' => request('category')]) }}">
                 @include('admin.partials.admin-violations-results')
@@ -88,16 +101,19 @@
              the stage(s) each happened on, AND swaps the top cards above
              to that approver's own numbers (see the script below). --}}
         @unless($showFolders)
-        <div class="bg-white rounded-xl shadow-card border border-surface-200 overflow-hidden">
-            <div class="px-6 py-4 border-b border-surface-200">
+        <div id="approver-roster-card" class="bg-white rounded-xl shadow-card border border-surface-200 overflow-hidden flex flex-col">
+            <div class="px-6 py-4 border-b border-surface-200 flex-shrink-0">
                 <h2 class="text-sm font-semibold text-surface-900 mb-3">Approvers — Violation Counts</h2>
                 <input type="text" id="approver-roster-search" placeholder="Search approver…" autocomplete="off"
                     class="w-full max-w-sm rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
             </div>
 
+            {{-- Feature: client-side "fitted" pagination — see
+                 resources/js/app.js's initFittedPagination(). --}}
+            <div class="flex-1 overflow-y-hidden js-adaptive-rows-area">
             <ul id="approver-roster-list" class="divide-y divide-surface-100">
                 @forelse($approverRoster as $approver)
-                    <li data-approver-name="{{ strtolower($approver->full_name) }}">
+                    <li class="approver-roster-row" data-row-group="{{ $approver->user_id }}" data-approver-name="{{ strtolower($approver->full_name) }}">
                         <button type="button"
                             class="w-full flex items-center justify-between gap-3 px-6 py-3 text-sm text-left {{ $approver->violation_count > 0 ? 'hover:bg-surface-50/60 cursor-pointer' : 'cursor-default' }}"
                             @if($approver->violation_count > 0)
@@ -122,44 +138,88 @@
                     <li class="px-6 py-4 text-center text-surface-400">No approvers found.</li>
                 @endforelse
             </ul>
-            <p id="approver-roster-empty" class="hidden py-4 text-center text-sm text-surface-400">No approver matches your search.</p>
+            </div>
+            <p id="approver-roster-empty" class="hidden py-4 text-center text-sm text-surface-400 flex-shrink-0">No approver matches your search.</p>
+            <div id="approver-roster-card-pagination" class="px-6 py-3 border-t border-surface-100 flex-shrink-0"></div>
         </div>
         @endunless
     </div>
+    @endunless
 
     @if($showFolders)
         {{-- Folders only — the Admin/Approver tables only appear once
              you've picked a category, same pattern as the Document
              Archive. --}}
-        <h2 class="text-sm font-semibold text-surface-900 mb-3">Browse by Category</h2>
-        {{-- Feature: bigger folders that actually fill the screen — same
-             treatment as resources/views/archive/index.blade.php's
-             identical folder markup; see that file for why 2 fixed
-             columns + a taller body instead of the old responsive
-             2/3/4-column, h-32 pairing. --}}
-        <div class="grid grid-cols-2 gap-8">
-            @foreach($folders as $folder)
-                <a href="{{ url()->current() }}?category={{ urlencode($folder->category) }}" class="group block">
-                    <div class="w-40 h-10 ml-8 rounded-t-lg bg-gradient-to-br from-primary-300 to-primary-500 group-hover:from-primary-400 group-hover:to-primary-600 transition-colors"></div>
-                    <div class="-mt-px h-64 rounded-b-xl rounded-tr-xl bg-gradient-to-br from-primary-400 to-primary-600 group-hover:from-primary-500 group-hover:to-primary-700 shadow-lg group-hover:shadow-xl group-hover:-translate-y-0.5 transition-all flex flex-col items-center justify-center text-center px-4">
-                        <h3 class="text-xl font-semibold text-white drop-shadow-sm">{{ $folder->category }}</h3>
-                        <p class="text-base text-primary-100 mt-1">{{ $folder->total }} violation{{ $folder->total === 1 ? '' : 's' }}</p>
-                    </div>
-                </a>
-            @endforeach
+        {{-- Feature: the folder tiles themselves shrink/grow to fit whatever
+             vertical space is actually left on screen (see sizeFolderGrid()
+             in the script below) — not an internal scrollbar, and not a
+             static h-64 guess that breaks the instant the grid needs more
+             room than that (more categories, or a larger font size). h-64
+             below is only the pre-JS fallback. --}}
+        <div id="sla-folder-card">
+            <h2 class="text-sm font-semibold text-surface-900 mb-3">Browse by Category</h2>
+            {{-- Fixed 2-column grid — same treatment as
+                 resources/views/archive/index.blade.php's identical folder
+                 markup. --}}
+            <div class="folder-grid grid grid-cols-2 gap-8">
+                @foreach($folders as $folder)
+                    <a href="{{ url()->current() }}?category={{ urlencode($folder->category) }}" class="group block">
+                        <div class="folder-tile-tab w-40 h-10 ml-8 rounded-t-lg bg-gradient-to-br from-primary-300 to-primary-500 group-hover:from-primary-400 group-hover:to-primary-600 transition-colors"></div>
+                        <div class="folder-tile-body -mt-px h-64 rounded-b-xl rounded-tr-xl bg-gradient-to-br from-primary-400 to-primary-600 group-hover:from-primary-500 group-hover:to-primary-700 shadow-lg group-hover:shadow-xl group-hover:-translate-y-0.5 transition-all flex flex-col items-center justify-center text-center px-4">
+                            <h3 class="text-xl font-semibold text-white drop-shadow-sm">{{ $folder->category }}</h3>
+                            <p class="text-base text-primary-100 mt-1">{{ $folder->total }} violation{{ $folder->total === 1 ? '' : 's' }}</p>
+                        </div>
+                    </a>
+                @endforeach
+            </div>
         </div>
     @endif
 </div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        // Client-side name filter for the always-visible Approvers table.
+        // Capped to the device's own viewport height + client-side fitted
+        // pagination for both cards — see resources/js/app.js's
+        // sizeCappedCard()/initFittedPagination() docblocks. Guarded since
+        // both cards are conditionally rendered (one needs a category
+        // picked; the other needs the folder grid to not be showing) and
+        // may not both exist on a given load.
+        const adminCard = document.getElementById('admin-violations-card');
+        const approverCard = document.getElementById('approver-roster-card');
+        const folderGrid = document.querySelector('#sla-folder-card .folder-grid');
+        let adminFitted = null;
+        let approverFitted = null;
+
+        if (adminCard) {
+            sizeCappedCard(adminCard);
+            adminFitted = initFittedPagination('admin-violations-results', '.admin-violation-row');
+        }
+        if (approverCard) {
+            sizeCappedCard(approverCard);
+            approverFitted = initFittedPagination('approver-roster-card', '.approver-roster-row');
+        }
+        if (folderGrid) {
+            sizeFolderGrid(folderGrid);
+        }
+        window.addEventListener('resize', function () {
+            if (adminCard) { sizeCappedCard(adminCard); adminFitted.refit(); }
+            if (approverCard) { sizeCappedCard(approverCard); approverFitted.refit(); }
+            if (folderGrid) { sizeFolderGrid(folderGrid); }
+        });
+
+        // Client-side name filter for the always-visible Approvers table —
+        // same "leave pagination's own hide alone" convention as
+        // admin/audit_logs.blade.php's applyDocumentFilter(): a row fitted
+        // pagination already hid for sitting on another page stays exactly
+        // as pagination left it, rather than the filter fighting it over
+        // the same 'hidden' class.
         document.getElementById('approver-roster-search')?.addEventListener('input', function (e) {
             const term = e.target.value.trim().toLowerCase();
             const rows = document.querySelectorAll('#approver-roster-list [data-approver-name]');
             let visibleCount = 0;
 
             rows.forEach((row) => {
+                if (row.dataset.fittedOffPage === '1') return;
                 const matches = row.dataset.approverName.includes(term);
                 row.classList.toggle('hidden', !matches);
                 if (matches) visibleCount++;
@@ -176,6 +236,7 @@
             const adminOpts = {
                 refreshUrl: adminResultsEl.dataset.refreshUrl,
                 target: adminResultsEl,
+                onSwap: function () { adminFitted.refit(); },
             };
             startLiveChannel('admin-dashboard', '.admin.activity-logged', adminOpts);
             startLivePoll({ ...adminOpts, pollUrl: adminResultsEl.dataset.pollUrl });

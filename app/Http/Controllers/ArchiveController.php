@@ -8,6 +8,7 @@ use App\Rules\ReliableMimeType;
 use App\Services\TextExtractionService;
 use App\Services\ValidationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -48,9 +49,7 @@ class ArchiveController extends Controller
      */
     private const OTHER_FOLDER = 'Other';
 
-    public function __construct(private TextExtractionService $extractor)
-    {
-    }
+    public function __construct(private TextExtractionService $extractor) {}
 
     public function index(Request $request)
     {
@@ -59,11 +58,10 @@ class ArchiveController extends Controller
         // Only Approver accounts can be "unassigned" in a way that blocks
         // the archive entirely — Admin is unrestricted and Originator is
         // scoped to their own submissions regardless of category.
-        if ($user->isApprover() && !$user->assigned_category) {
+        if ($user->isApprover() && ! $user->assigned_category) {
             return view('archive.index', [
                 'showFolders' => false,
                 'documents' => DocumentRepository::whereRaw('1 = 0')->paginate(10),
-                'categories' => [],
                 'restrictedCategory' => null,
                 'noCategoryAssigned' => true,
                 'isOwnSubmissionsView' => false,
@@ -79,16 +77,15 @@ class ArchiveController extends Controller
         // everything from the folder screen" (below) transitions into.
         $hasActiveFilters = $request->filled('category') || $request->filled('keyword')
             || $request->filled('date_from') || $request->filled('date_to');
-        $showFolders = !$user->isApprover() && !$hasActiveFilters;
+        $showFolders = ! $user->isApprover() && ! $hasActiveFilters;
 
         if ($showFolders) {
             return view('archive.index', [
                 'showFolders' => true,
                 'folders' => $this->folderStats($user),
-                'categories' => [...ValidationService::knownCategories(), self::OTHER_FOLDER],
                 'restrictedCategory' => null,
                 'noCategoryAssigned' => false,
-                'isOwnSubmissionsView' => !$user->isAdmin(),
+                'isOwnSubmissionsView' => ! $user->isAdmin(),
             ]);
         }
 
@@ -97,7 +94,6 @@ class ArchiveController extends Controller
         return view('archive.index', [
             'showFolders' => false,
             'documents' => $documents,
-            'categories' => [...ValidationService::knownCategories(), self::OTHER_FOLDER],
             'restrictedCategory' => $user->isApprover() ? $user->assigned_category : null,
             'noCategoryAssigned' => false,
             'isOwnSubmissionsView' => $isOwnSubmissionsView,
@@ -114,7 +110,7 @@ class ArchiveController extends Controller
     {
         $user = $request->user();
 
-        abort_if($user->isApprover() && !$user->assigned_category, 404);
+        abort_if($user->isApprover() && ! $user->assigned_category, 404);
 
         [$documents, $isOwnSubmissionsView] = $this->searchResults($request, $user);
 
@@ -122,7 +118,7 @@ class ArchiveController extends Controller
     }
 
     /**
-     * @return array{0: \Illuminate\Contracts\Pagination\LengthAwarePaginator, 1: bool}
+     * @return array{0: Collection<int, DocumentRepository>, 1: bool}
      */
     private function searchResults(Request $request, $user): array
     {
@@ -135,7 +131,7 @@ class ArchiveController extends Controller
         if ($user->isApprover()) {
             // Hard RBAC restriction — approvers cannot override this via input.
             $query->where('ml_category', $user->assigned_category);
-        } elseif (!$user->isAdmin()) {
+        } elseif (! $user->isAdmin()) {
             // Originator: their own approved submissions, any category —
             // they may still narrow it down with the category filter below.
             $query->where('originator_id', $user->user_id);
@@ -150,7 +146,7 @@ class ArchiveController extends Controller
         // desired_routing rather than ml_category (the classifier is
         // closed-set, so ml_category is ALWAYS one of the real known
         // categories even for a document flagged this way).
-        if (!$user->isApprover() && $request->filled('category')) {
+        if (! $user->isApprover() && $request->filled('category')) {
             $category = $request->string('category');
             $category->toString() === self::OTHER_FOLDER
                 ? $query->where('desired_routing', 'unrelated')
@@ -180,29 +176,14 @@ class ArchiveController extends Controller
             default => $query->latest('upload_date'),
         };
 
-        // Admin browses the whole repository across every category/
-        // originator, so a denser page is the right default; Approver
-        // and Originator are each already scoped down to a much smaller
-        // slice (one category, or just their own submissions), where 10
-        // still reads comfortably.
-        $perPage = $user->isAdmin() ? 5 : 10;
-
-        // Real page route (role-specific — admin/approver/originator each
-        // have their own 'archive' route name under the same URL shape),
-        // not the implicit current-request path. This is also built from
-        // within refresh() (the single shared archive.refresh route every
-        // role's live-poll JS hits) — a path derived from THAT request
-        // would bake the bare-fragment URL into Next/Previous whenever a
-        // live swap happens to be what rendered this page. See
-        // AdminController::paginateContainers()'s docblock for the same
-        // reasoning applied everywhere else.
-        $realRoute = match (true) {
-            $user->isAdmin() => route('admin.archive'),
-            $user->isApprover() => route('approver.archive'),
-            default => route('originator.archive'),
-        };
-
-        return [$query->paginate($perPage)->withQueryString()->withPath($realRoute), $isOwnSubmissionsView];
+        // Feature: client-side row fitting — see resources/js/app.js's
+        // initFittedPagination() and AdminController::documents()'s
+        // matching docblock. Every matching document is sent in one
+        // response; the browser measures the whole list and works out
+        // every page's real boundary itself, instead of a guessed fixed
+        // page size that either wasted screen space or needed its own
+        // internal scrollbar.
+        return [$query->get(), $isOwnSubmissionsView];
     }
 
     /**
@@ -217,7 +198,7 @@ class ArchiveController extends Controller
     {
         $base = DocumentRepository::query()->whereIn('global_status', ['approved', 'auto_approved']);
 
-        if (!$user->isAdmin()) {
+        if (! $user->isAdmin()) {
             $base->where('originator_id', $user->user_id);
         }
 
@@ -262,7 +243,7 @@ class ArchiveController extends Controller
                 403,
                 'This document is outside your assigned category.'
             );
-        } elseif (!$user->isAdmin()) {
+        } elseif (! $user->isAdmin()) {
             // Originator: can only download documents they themselves submitted.
             abort_unless(
                 $document->originator_id === $user->user_id,
@@ -305,8 +286,8 @@ class ArchiveController extends Controller
     public function storeLegacy(Request $request)
     {
         $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType(), 'max:20480'],
-            'category' => ['required', 'in:' . implode(',', ValidationService::knownCategories())],
+            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:20480'],
+            'category' => ['required', 'in:'.implode(',', ValidationService::knownCategories())],
             'title' => ['nullable', 'string', 'max:255'],
             // Required, not optional — this is the only record of WHY a
             // document skipped classification/validation/peer review

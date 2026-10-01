@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\URL;
 use Laravel\Sanctum\HasApiTokens;
 
 /**
@@ -91,13 +92,51 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     // --- Role helpers ---
-    public function isAdmin(): bool { return $this->role === 'admin'; }
-    public function isOriginator(): bool { return $this->role === 'originator'; }
-    public function isApprover(): bool { return $this->role === 'approver'; }
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isOriginator(): bool
+    {
+        return $this->role === 'originator';
+    }
+
+    public function isApprover(): bool
+    {
+        return $this->role === 'approver';
+    }
 
     // --- Department / level helpers ---
-    public function isHead(): bool { return $this->level === 'head'; }
-    public function isStaffLevel(): bool { return $this->level === 'staff'; }
+    public function isHead(): bool
+    {
+        return $this->level === 'head';
+    }
+
+    public function isStaffLevel(): bool
+    {
+        return $this->level === 'staff';
+    }
+
+    /**
+     * The single source of truth for how a role reads everywhere in the
+     * UI (header badge, chat, email, drilldowns) — matches the capstone
+     * paper's own terminology and the "Staff (Originator)"/"Staff
+     * (Approver)" role options in admin/users.blade.php's Create Account
+     * form. Admin has no tier. Every Originator is Staff-tier — there is
+     * no Head-Originator concept anywhere in the system, so this is a
+     * fixed label, not read from $level the way Approver's is (Approver
+     * starts Staff and can be promoted to Head via the level field).
+     */
+    public function displayRole(): string
+    {
+        return match ($this->role) {
+            'admin' => 'Admin',
+            'originator' => 'Staff Originator',
+            'approver' => $this->isHead() ? 'Head Approver' : 'Staff Approver',
+            default => ucfirst($this->role),
+        };
+    }
 
     /**
      * The single Admin account every Originator/Approver's chat thread is
@@ -183,7 +222,7 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function sendEmailVerificationNotification(): void
     {
-        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        $url = URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
             ['id' => $this->getKey(), 'hash' => sha1($this->getEmailForVerification())]

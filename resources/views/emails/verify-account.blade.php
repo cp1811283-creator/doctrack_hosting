@@ -1,7 +1,7 @@
 @component('mail::message')
 # Welcome to {{ config('app.name') }}
 
-An account was created for you as **{{ $user->full_name }}** ({{ ucfirst($user->role) }}).
+An account was created for you as **{{ $user->full_name }}** ({{ $user->displayRole() }}).
 
 Before you can log in, please confirm this is really your email address:
 

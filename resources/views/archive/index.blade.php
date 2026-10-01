@@ -17,43 +17,49 @@
              (see the else branch below); showing them here duplicated the
              same controls twice and added noise to what should be a plain
              "pick a category" screen. --}}
-        <h2 class="text-sm font-semibold text-surface-900 mb-3">
-            Browse by Category
-            @if($isOwnSubmissionsView)
-                <span class="text-xs font-normal text-surface-400">— your own approved submissions</span>
-            @endif
-        </h2>
-        {{-- Feature: bigger folders that actually fill the screen — fixed
-             2-column grid (not a responsive 2/3/4-column one) so each tile
-             gets a whole half-width column to grow into, paired with a
-             much taller body below than the original h-32/w-24 pairing. --}}
-        <div class="grid grid-cols-2 gap-8">
-            @foreach($folders as $folder)
-                <a href="{{ url()->current() }}?category={{ urlencode($folder->category) }}" class="group block">
-                    {{-- Two rounded pieces (tab + body), not a clip-path
-                         polygon — clip-path only does straight-line corners,
-                         which read as "pointy" rather than a real folder.
-                         Gradients on both pieces give it depth instead of a
-                         flat fill. Same blue gradient as the sidebar's "D"
-                         logo badge (layouts/app.blade.php) — from-primary-400
-                         to-primary-600 — for brand consistency. --}}
-                    <div class="w-40 h-10 ml-8 rounded-t-lg bg-gradient-to-br from-primary-300 to-primary-500 group-hover:from-primary-400 group-hover:to-primary-600 transition-colors"></div>
-                    <div class="-mt-px h-64 rounded-b-xl rounded-tr-xl bg-gradient-to-br from-primary-400 to-primary-600 group-hover:from-primary-500 group-hover:to-primary-700 shadow-lg group-hover:shadow-xl group-hover:-translate-y-0.5 transition-all flex flex-col items-center justify-center text-center px-4">
-                        <h3 class="text-xl font-semibold text-white drop-shadow-sm">{{ $folder->category }}</h3>
-                        <p class="text-sm text-primary-100 mt-1">{{ $folder->total }} document{{ $folder->total === 1 ? '' : 's' }}</p>
-                        @if($folder->disputed > 0 || $folder->auto_approved > 0)
-                            <div class="flex flex-wrap justify-center gap-1.5 mt-3">
-                                @if($folder->disputed > 0)
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white text-processing-700">{{ $folder->disputed }} disputed</span>
-                                @endif
-                                @if($folder->auto_approved > 0)
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white text-approved-700">{{ $folder->auto_approved }} auto-approved</span>
-                                @endif
-                            </div>
-                        @endif
-                    </div>
-                </a>
-            @endforeach
+        {{-- Feature: the folder tiles themselves shrink/grow to fit whatever
+             vertical space is actually left on screen (see sizeFolderGrid()
+             below) — not an internal scrollbar, and not a static h-64 guess
+             that breaks the instant the grid needs more room than that
+             (more categories, or a larger font size growing the heading/
+             sidebar above it). h-64 below is only the pre-JS fallback. --}}
+        <div id="archive-folder-card">
+            <h2 class="text-sm font-semibold text-surface-900 mb-3">
+                Browse by Category
+                @if($isOwnSubmissionsView)
+                    <span class="text-xs font-normal text-surface-400">— your own approved submissions</span>
+                @endif
+            </h2>
+            {{-- Fixed 2-column grid (not a responsive 2/3/4-column one) so
+                 each tile gets a whole half-width column to grow into. --}}
+            <div class="folder-grid grid grid-cols-2 gap-8">
+                @foreach($folders as $folder)
+                    <a href="{{ url()->current() }}?category={{ urlencode($folder->category) }}" class="group block">
+                        {{-- Two rounded pieces (tab + body), not a clip-path
+                             polygon — clip-path only does straight-line corners,
+                             which read as "pointy" rather than a real folder.
+                             Gradients on both pieces give it depth instead of a
+                             flat fill. Same blue gradient as the sidebar's "D"
+                             logo badge (layouts/app.blade.php) — from-primary-400
+                             to-primary-600 — for brand consistency. --}}
+                        <div class="folder-tile-tab w-40 h-10 ml-8 rounded-t-lg bg-gradient-to-br from-primary-300 to-primary-500 group-hover:from-primary-400 group-hover:to-primary-600 transition-colors"></div>
+                        <div class="folder-tile-body -mt-px h-64 rounded-b-xl rounded-tr-xl bg-gradient-to-br from-primary-400 to-primary-600 group-hover:from-primary-500 group-hover:to-primary-700 shadow-lg group-hover:shadow-xl group-hover:-translate-y-0.5 transition-all flex flex-col items-center justify-center text-center px-4">
+                            <h3 class="text-xl font-semibold text-white drop-shadow-sm">{{ $folder->category }}</h3>
+                            <p class="text-sm text-primary-100 mt-1">{{ $folder->total }} document{{ $folder->total === 1 ? '' : 's' }}</p>
+                            @if($folder->disputed > 0 || $folder->auto_approved > 0)
+                                <div class="flex flex-wrap justify-center gap-1.5 mt-3">
+                                    @if($folder->disputed > 0)
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white text-processing-700">{{ $folder->disputed }} disputed</span>
+                                    @endif
+                                    @if($folder->auto_approved > 0)
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white text-approved-700">{{ $folder->auto_approved }} auto-approved</span>
+                                    @endif
+                                </div>
+                            @endif
+                        </div>
+                    </a>
+                @endforeach
+            </div>
         </div>
 
     @else
@@ -87,28 +93,32 @@
                 @endunless
                 <form method="GET" id="archive-filter-form" class="flex flex-wrap gap-3 items-end">
                     <div class="flex-1 min-w-[140px]">
-                        <label class="block text-xs font-medium text-surface-700 mb-1">Keyword</label>
+                        <label class="block text-xs font-medium text-surface-700 mb-1">Search</label>
                         <input type="text" id="archive-keyword" name="keyword" value="{{ request('keyword') }}" placeholder="Title or content…" autocomplete="off"
                             class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
                     </div>
 
-                    @if($restrictedCategory)
-                        <input type="hidden" name="category" value="{{ $restrictedCategory }}">
-                        <div>
-                            <label class="block text-xs font-medium text-surface-700 mb-1">Category</label>
-                            <span class="inline-flex items-center px-3 py-2 rounded-lg bg-surface-100 text-sm font-medium text-surface-700">{{ $restrictedCategory }}</span>
-                        </div>
-                    @else
-                        <div>
-                            <label class="block text-xs font-medium text-surface-700 mb-1">Category</label>
-                            <select name="category" id="archive-category" class="rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
-                                <option value="">All Categories</option>
-                                @foreach($categories as $c)
-                                    <option value="{{ $c }}" @selected(request('category') === $c)>{{ $c }}</option>
-                                @endforeach
-                            </select>
-                        </div>
-                    @endif
+                    @php
+                        // Always a static label now, never a dropdown —
+                        // for any role, not just Approvers (who already
+                        // had the read-only treatment via $restrictedCategory).
+                        // Switching categories only happens through the
+                        // folder grid ("All Categories" above) — a second,
+                        // dropdown-based way to do the same thing made the
+                        // folders themselves feel pointless. $restrictedCategory
+                        // (role-locked) takes priority when set; otherwise
+                        // this reflects whatever ?category= is currently
+                        // active, or "All Categories" if none is (e.g. a
+                        // keyword-only search spanning every category).
+                        $currentCategory = $restrictedCategory ?? request('category') ?: null;
+                    @endphp
+                    <div>
+                        <label class="block text-xs font-medium text-surface-700 mb-1">Category</label>
+                        @if($currentCategory)
+                            <input type="hidden" name="category" value="{{ $currentCategory }}">
+                        @endif
+                        <span class="inline-flex items-center px-3 py-2 rounded-lg bg-surface-100 text-sm font-medium text-surface-700">{{ $currentCategory ?? 'All Categories' }}</span>
+                    </div>
 
                     <div>
                         <label class="block text-xs font-medium text-surface-700 mb-1">From</label>
@@ -137,8 +147,19 @@
                 </form>
             </div>
 
-            <div id="archive-results" data-refresh-url="{{ route('archive.refresh') }}" data-user-id="{{ auth()->id() }}">
-                @include('archive.partials.results')
+            {{-- Capped to the device's own viewport height (Feature:
+                 pagination, not scrolling, absorbs a long archive). Height
+                 is set by JS (see resources/js/app.js's sizeCappedCard())
+                 — a stable wrapper a live swap never replaces (only
+                 #archive-results inside it is), so it's measured once on
+                 load, not per-swap. The filter bar sits outside this
+                 wrapper (unlike Audit Logs, where it's inside one unified
+                 card) — sizeCappedCard() only cares about ITS OWN top
+                 position, so that's fine either way. --}}
+            <div id="archive-card" class="flex flex-col">
+                <div id="archive-results" class="flex-1 min-h-0 flex flex-col" data-refresh-url="{{ route('archive.refresh') }}" data-user-id="{{ auth()->id() }}">
+                    @include('archive.partials.results')
+                </div>
             </div>
     </div>
     @endif
@@ -154,9 +175,51 @@
     // Search/Clear buttons keep working as a plain full-page-reload
     // fallback if JS is unavailable — nothing here is required for the
     // page to function.
-    (function () {
+    //
+    // Deferred to DOMContentLoaded (verified 2026-10-01, fixing a real bug:
+    // sizeCappedCard/initFittedPagination/the live keyword search were all
+    // silently dead) — app.js's sizeCappedCard()/initFittedPagination()
+    // live on window, set by app.js's own deferred module script, which
+    // hasn't necessarily run yet if this IIFE fires immediately on parse.
+    // Calling sizeCappedCard() too early threw a bare ReferenceError that
+    // killed the rest of this function — including the keyword input's
+    // listener a few lines further down, which is why typing silently
+    // fell back to pressing Enter instead of searching live. Same
+    // reasoning as the inner DOMContentLoaded wrapper this replaces
+    // further down (that one only existed for window.Echo; redundant now
+    // that the whole function waits for the same event).
+    document.addEventListener('DOMContentLoaded', function () {
+        // Folder grid screen (the "pick a category" folder tiles) — see
+        // sizeFolderGrid()'s docblock in app.js. Separate from the results-card sizing below
+        // since the two screens are mutually exclusive, picked further up
+        // this same template based on whether a category is active;
+        // guarded because only one of the two ever exists on a given load.
+        const folderGrid = document.querySelector('#archive-folder-card .folder-grid');
+        if (folderGrid) {
+            sizeFolderGrid(folderGrid);
+            window.addEventListener('resize', () => sizeFolderGrid(folderGrid));
+        }
+
         const resultsEl = document.getElementById('archive-results');
         if (!resultsEl) return;
+
+        // See resources/js/app.js's sizeCappedCard() docblock.
+        const archiveCard = document.getElementById('archive-card');
+        sizeCappedCard(archiveCard);
+
+        // Fitted pagination — see resources/js/app.js's
+        // initFittedPagination() for the full mechanism (shared with
+        // Document Tracking/User Accounts/Audit Logs/Your Submissions).
+        // Replaces real server-side pagination (DocumentRepository used to
+        // be ->paginate()'d at a fixed 5/10 per page regardless of actual
+        // screen size) — the whole matching list is sent in one response
+        // now, and the browser works out each page's real boundary itself.
+        const fittedPagination = initFittedPagination('archive-results', '.archive-row');
+
+        window.addEventListener('resize', () => {
+            sizeCappedCard(archiveCard);
+            fittedPagination.refit();
+        });
 
         const form = document.getElementById('archive-filter-form');
         const keywordInput = document.getElementById('archive-keyword');
@@ -182,6 +245,7 @@
                 .then((res) => (res.ok ? res.text() : Promise.reject(res)))
                 .then((html) => {
                     resultsEl.innerHTML = html;
+                    fittedPagination.refit();
                     const query = params.toString();
                     history.replaceState(null, '', query ? `${window.location.pathname}?${query}` : window.location.pathname);
                 })
@@ -198,25 +262,12 @@
         form.querySelectorAll('select[name="category"], input[name="date_from"], input[name="date_to"], select[name="sort"]')
             .forEach((el) => el.addEventListener('change', runSearch));
 
-        // Pagination links inside the swapped-in fragment point at the full
-        // page (so paging still works if JS never loaded) — intercept them
-        // and fetch the SAME query string from the refresh endpoint instead,
-        // so paging stays as live as searching rather than swapping in a
-        // full HTML document into this fragment container.
-        resultsEl.addEventListener('click', (e) => {
-            const link = e.target.closest('a[href]');
-            if (!link || !resultsEl.contains(link)) return;
-            const url = new URL(link.href, window.location.origin);
-            if (url.pathname !== window.location.pathname) return; // e.g. a Download link — let it navigate normally
-            e.preventDefault();
-            fetch(`${refreshUrl}?${url.searchParams.toString()}`, { headers: { Accept: 'text/html' } })
-                .then((res) => (res.ok ? res.text() : Promise.reject(res)))
-                .then((html) => {
-                    resultsEl.innerHTML = html;
-                    history.replaceState(null, '', link.href);
-                })
-                .catch(() => {});
-        });
+        // The old pagination-link click-interception block that used to
+        // live here is gone — fitted pagination has no real <a href> page
+        // links to intercept anymore (see initFittedPagination()'s own
+        // hand-built prev/page-number/forward buttons), so that whole
+        // handler became dead code once server-side ->paginate() was
+        // removed from ArchiveController::searchResults().
 
         // Realtime: a document newly reaching Archive (approved, or
         // auto-approved) anywhere in the system re-runs the CURRENT
@@ -228,23 +279,20 @@
         // connection is down, mirroring this app's SLA-check jobs (instant
         // dispatch + a slow periodic sweep behind it).
         //
-        // Deferred to DOMContentLoaded — this whole IIFE otherwise runs
-        // before app.js's deferred module script has defined window.Echo,
-        // so `if (window.Echo)` would silently evaluate false and never
-        // wire anything up (see the matching comment in
-        // admin/dashboard.blade.php for the full explanation).
-        document.addEventListener('DOMContentLoaded', function () {
-            if (window.Echo) {
-                @if(auth()->user()->isAdmin())
-                    window.Echo.private('admin-dashboard').listen('.document.status-changed', runSearch);
-                @elseif(auth()->user()->isOriginator())
-                    window.Echo.private(`originator.${resultsEl.dataset.userId}`).listen('.document.status-changed', runSearch);
-                @elseif(auth()->user()->isApprover())
-                    window.Echo.private('approvers').listen('.document.status-changed', runSearch);
-                @endif
-            }
-            setInterval(runSearch, (45 + Math.random() * 30) * 1000);
-        });
-    })();
+        // No separate DOMContentLoaded wrapper needed here — the whole
+        // function already waits for that same event now (see the
+        // docblock at the top of this script), which is what guarantees
+        // window.Echo is defined by this point too.
+        if (window.Echo) {
+            @if(auth()->user()->isAdmin())
+                window.Echo.private('admin-dashboard').listen('.document.status-changed', runSearch);
+            @elseif(auth()->user()->isOriginator())
+                window.Echo.private(`originator.${resultsEl.dataset.userId}`).listen('.document.status-changed', runSearch);
+            @elseif(auth()->user()->isApprover())
+                window.Echo.private('approvers').listen('.document.status-changed', runSearch);
+            @endif
+        }
+        setInterval(runSearch, (45 + Math.random() * 30) * 1000);
+    });
 </script>
 @endsection

@@ -44,7 +44,7 @@
     // shrinking the whole chart uniformly.
     $VBW = 1000; $VBH = 170; $AXIS_W = 34; $RIGHT_PAD = 16; $TOP_PAD = 8; $BOTTOM_PAD = 8;
     $chartH = $VBH - $TOP_PAD - $BOTTOM_PAD;
-    $chartMax = collect($chartRows)->flatMap(fn ($r) => [$r->uploaded, $r->approved, $r->rejected])->max() ?: 1;
+    $chartMax = collect($chartRows)->flatMap(fn ($r) => [$r->uploaded, $r->human_approved, $r->auto_approved, $r->rejected])->max() ?: 1;
     $stepX = count($chartRows) > 1 ? ($VBW - $AXIS_W - $RIGHT_PAD) / (count($chartRows) - 1) : 0;
 
     // Point coordinates per series, reused for the smoothed path, the area
@@ -58,7 +58,12 @@
         })->all();
     };
     $uploadedPoints = $pointsFor('uploaded');
-    $approvedPoints = $pointsFor('approved');
+    // Human-decided approvals only — the combined 'approved' field
+    // (human + auto) still exists on $chartRows for anything else that
+    // wants total approved volume, but plotting it here would double-count
+    // against the separate Auto Approved line below.
+    $approvedPoints = $pointsFor('human_approved');
+    $autoApprovedPoints = $pointsFor('auto_approved');
     $rejectedPoints = $pointsFor('rejected');
 
     // Catmull-Rom-to-Bezier: turns the straight-segment point list into a
@@ -113,7 +118,7 @@
         $nowLabel = now()->copy()->setTime(now()->hour, $snappedMinute)->format('g:i A');
     }
 
-    // The single reusable hover payload — one entry per period, all three
+    // The single reusable hover payload — one entry per period, all four
     // series' values + precomputed y-coordinates, so the client-side
     // crosshair (see dashboard.blade.php) can move the markers and update
     // the one-date readout without any further server round-trip.
@@ -121,7 +126,8 @@
         'x' => $uploadedPoints[$i]['x'],
         'bucket' => $row->bucket,
         'uploaded' => $row->uploaded, 'uploadedY' => $uploadedPoints[$i]['y'],
-        'approved' => $row->approved, 'approvedY' => $approvedPoints[$i]['y'],
+        'approved' => $row->human_approved, 'approvedY' => $approvedPoints[$i]['y'],
+        'autoApproved' => $row->auto_approved, 'autoApprovedY' => $autoApprovedPoints[$i]['y'],
         'rejected' => $row->rejected, 'rejectedY' => $rejectedPoints[$i]['y'],
     ])->all();
     $latestPoint = $jsPoints[count($jsPoints) - 1] ?? null;
@@ -135,8 +141,9 @@
     // informative, not a target to chase up or down), so its arrow stays neutral.
     $tiles = [
         ['label' => 'Uploaded', 'value' => $kpi['current']['uploaded'] ?? null, 'trend' => $kpi['trend']['uploaded'] ?? null, 'format' => 'count', 'good' => 'up', 'description' => 'How many documents were submitted during this period.'],
-        ['label' => 'Approval Rate', 'value' => $kpi['current']['approval_rate'] ?? null, 'trend' => $kpi['trend']['approval_rate'] ?? null, 'format' => 'percent', 'good' => 'up', 'description' => 'Share of decided documents that were approved — by a person, or automatically.'],
+        ['label' => 'Approval Rate', 'value' => $kpi['current']['approval_rate'] ?? null, 'trend' => $kpi['trend']['approval_rate'] ?? null, 'format' => 'percent', 'good' => 'up', 'description' => 'Share of decided documents approved by a person — excludes auto-approvals, see Auto-Approval Rate for those.'],
         ['label' => 'Auto-Approval Rate', 'value' => $kpi['current']['auto_approval_rate'] ?? null, 'trend' => $kpi['trend']['auto_approval_rate'] ?? null, 'format' => 'percent', 'good' => null, 'description' => 'Share of approvals the system made automatically because nobody acted in time.'],
+        ['label' => 'Rejection Rate', 'value' => $kpi['current']['rejection_rate'] ?? null, 'trend' => $kpi['trend']['rejection_rate'] ?? null, 'format' => 'percent', 'good' => 'down', 'description' => 'Share of decided documents that were rejected. Together, Approval Rate + Auto-Approval Rate + Rejection Rate add up to 100% of decided documents.'],
         ['label' => 'Avg. Time to Decide', 'value' => $kpi['current']['avg_minutes'] ?? null, 'trend' => $kpi['trend']['avg_minutes'] ?? null, 'format' => 'duration', 'good' => 'down', 'description' => 'Average time from upload to a final decision in this period.'],
         ['label' => 'SLA Violation Rate', 'value' => $kpi['current']['sla_violation_rate'] ?? null, 'trend' => $kpi['trend']['sla_violation_rate'] ?? null, 'format' => 'percent', 'good' => 'down', 'description' => 'Share of decisions that missed their SLA deadline.'],
     ];
@@ -146,7 +153,7 @@
     {{-- KPI tiles: this period's headline numbers, with a % trend against
          the immediately preceding period — the scannable summary a chart
          alone can't give you at a glance. --}}
-    <div class="px-5 pt-3 grid grid-cols-3 sm:grid-cols-5 gap-2">
+    <div class="px-5 pt-3 grid grid-cols-3 sm:grid-cols-6 gap-2">
         @foreach($tiles as $tile)
             @php
                 $trendUp = $tile['trend'] !== null && $tile['trend'] > 0;
@@ -200,6 +207,14 @@
         <div class="flex items-center gap-4 text-xs text-surface-500">
             <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-primary-400 inline-block"></span>Uploaded</span>
             <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-approved-500 inline-block"></span>Approved</span>
+            {{-- Amber — not an arbitrary 4th chart color, this is the app's
+                 existing convention for "auto-approved" everywhere else it
+                 appears (see components/status-badge.blade.php's
+                 auto_approved case). This chart's own "Now" marker already
+                 uses the same color family, but as a dashed vertical
+                 reference line with its own label, not a data series, so
+                 the two don't read as the same thing. --}}
+            <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-processing-500 inline-block"></span>Auto Approved</span>
             <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rejected-500 inline-block"></span>Rejected</span>
         </div>
         @if($latestPoint)
@@ -209,6 +224,8 @@
                 Uploaded <span class="text-primary-700 font-semibold" data-readout-uploaded>{{ $latestPoint['uploaded'] }}</span>
                 <span class="text-surface-400 font-normal">·</span>
                 Approved <span class="text-approved-700 font-semibold" data-readout-approved>{{ $latestPoint['approved'] }}</span>
+                <span class="text-surface-400 font-normal">·</span>
+                Auto Approved <span class="text-processing-700 font-semibold" data-readout-autoapproved>{{ $latestPoint['autoApproved'] }}</span>
                 <span class="text-surface-400 font-normal">·</span>
                 Rejected <span class="text-rejected-700 font-semibold" data-readout-rejected>{{ $latestPoint['rejected'] }}</span>
             </div>
@@ -226,13 +243,14 @@
                  teleporting between the fixed period positions, which is
                  what made snapping between dates feel laggy/abrupt before. --}}
             <style>
-                .analytics-crosshair, .analytics-hover-dot-uploaded, .analytics-hover-dot-approved, .analytics-hover-dot-rejected {
+                .analytics-crosshair, .analytics-hover-dot-uploaded, .analytics-hover-dot-approved, .analytics-hover-dot-autoapproved, .analytics-hover-dot-rejected {
                     opacity: 0;
                     transition: cx 100ms ease-out, cy 100ms ease-out, x1 100ms ease-out, x2 100ms ease-out, opacity 120ms ease-out;
                 }
                 .analytics-chart-svg:hover .analytics-crosshair,
                 .analytics-chart-svg:hover .analytics-hover-dot-uploaded,
                 .analytics-chart-svg:hover .analytics-hover-dot-approved,
+                .analytics-chart-svg:hover .analytics-hover-dot-autoapproved,
                 .analytics-chart-svg:hover .analytics-hover-dot-rejected {
                     opacity: 1;
                 }
@@ -251,10 +269,11 @@
                     <text x="{{ $AXIS_W - 6 }}" y="{{ $gy + 3 }}" text-anchor="end" class="fill-surface-400" style="font-size: 9px;">{{ (int) round($chartMax * $g / 3) }}</text>
                 @endfor
 
-                {{-- Uploaded gets the shaded area (the "total volume" series, matching the reference look); Approved/Rejected stay clean lines so three overlapping fills don't turn into visual mud. --}}
+                {{-- Uploaded gets the shaded area (the "total volume" series, matching the reference look); Approved/Auto Approved/Rejected stay clean lines so overlapping fills don't turn into visual mud. --}}
                 <path d="{{ $areaPath($uploadedPoints) }}" fill="url(#analyticsUploadedFill)" stroke="none" />
 
                 <path d="{{ $smoothPath($rejectedPoints) }}" fill="none" class="stroke-rejected-500" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" />
+                <path d="{{ $smoothPath($autoApprovedPoints) }}" fill="none" class="stroke-processing-500" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" />
                 <path d="{{ $smoothPath($approvedPoints) }}" fill="none" class="stroke-approved-500" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" />
                 <path d="{{ $smoothPath($uploadedPoints) }}" fill="none" class="stroke-primary-400" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" />
 
@@ -287,6 +306,7 @@
                 {{-- Crosshair + one hover marker per series — position kept in sync by JS on every mousemove; visibility is pure CSS (see the <style> above), never toggled in JS. pointer-events-none so hovering the marker itself can't interfere with the svg-level mousemove target. --}}
                 <line class="analytics-crosshair stroke-surface-300 pointer-events-none" x1="{{ $latestPoint['x'] ?? 0 }}" y1="{{ $TOP_PAD }}" x2="{{ $latestPoint['x'] ?? 0 }}" y2="{{ $baselineY }}" stroke-width="1" stroke-dasharray="3,3" vector-effect="non-scaling-stroke" />
                 <circle class="analytics-hover-dot-rejected fill-white stroke-rejected-500 pointer-events-none" cx="{{ $latestPoint['x'] ?? 0 }}" cy="{{ $latestPoint['rejectedY'] ?? $baselineY }}" r="4" stroke-width="2" vector-effect="non-scaling-stroke" />
+                <circle class="analytics-hover-dot-autoapproved fill-white stroke-processing-500 pointer-events-none" cx="{{ $latestPoint['x'] ?? 0 }}" cy="{{ $latestPoint['autoApprovedY'] ?? $baselineY }}" r="4" stroke-width="2" vector-effect="non-scaling-stroke" />
                 <circle class="analytics-hover-dot-approved fill-white stroke-approved-500 pointer-events-none" cx="{{ $latestPoint['x'] ?? 0 }}" cy="{{ $latestPoint['approvedY'] ?? $baselineY }}" r="4" stroke-width="2" vector-effect="non-scaling-stroke" />
                 <circle class="analytics-hover-dot-uploaded fill-white stroke-primary-400 pointer-events-none" cx="{{ $latestPoint['x'] ?? 0 }}" cy="{{ $latestPoint['uploadedY'] ?? $baselineY }}" r="4.5" stroke-width="2.5" vector-effect="non-scaling-stroke" />
             </svg>

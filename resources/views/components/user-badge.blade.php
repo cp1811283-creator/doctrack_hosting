@@ -26,11 +26,6 @@
         // stages," so that has to read as "All Stages," not blank.
         $stageNames = $user->workflowStages()->orderBy('sequence_order')->pluck('stage_name');
         $stageLabel = $stageNames->isNotEmpty() ? $stageNames->implode(' / ') : 'All Stages';
-        $positionLabel = match ($user->level) {
-            'head' => 'Head Approver',
-            'staff' => 'Staff Approver',
-            default => 'Approver',
-        };
     }
 @endphp
 <div class="{{ $center ? 'text-center' : 'text-left' }} leading-tight">
@@ -41,6 +36,6 @@
     @endif
     <p class="text-sm font-semibold text-surface-900 truncate max-w-[140px] sm:max-w-[260px]">{{ $user->full_name }}</p>
     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-500/15">
-        {{ $isApprover ? $positionLabel : ucfirst($user->role) }}
+        {{ $user->displayRole() }}
     </span>
 </div>
