@@ -6,6 +6,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Support\Stringable;
 use Sentry\Laravel\Integration;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -62,13 +63,20 @@ return Application::configure(basePath: dirname(__DIR__))
         // might ever miss (e.g. the queue worker was down when a job should have
         // fired). 5 minutes is plenty for a safety net that isn't the
         // primary mechanism anymore.
-        // appendOutputTo: this command has been failing silently in
-        // production (Railway scheduler logs show "FAIL" on every run,
-        // but the default `> /dev/null 2>&1` redirect discards the
-        // actual exception) — capturing output here until the real
-        // cause is found and fixed, then this can be reverted.
+        // Investigated 2026-10-01: CheckParallelSlas's own exit-code logic
+        // was already correct (0 on success, 1 only when a seat genuinely
+        // fails). The real problem was visibility — appendOutputTo wrote to
+        // a file inside Railway's ephemeral scheduler container, which gets
+        // wiped on every redeploy/restart before anyone can read it. Any
+        // uncaught exception (e.g. the DB query itself failing — now
+        // wrapped, see CheckParallelSlas::handle()) showed up to Railway
+        // only as a bare "FAIL" with zero diagnostic content.
+        // onFailureWithOutput reports real failures straight to Sentry
+        // (config/sentry.php) instead, which survives container recycling.
         $schedule->command('workflow:check-parallel-slas')->everyFiveMinutes()->withoutOverlapping()
-            ->appendOutputTo(storage_path('logs/scheduler-parallel-slas.log'));
+            ->onFailureWithOutput(function (Stringable $output) {
+                report(new RuntimeException("workflow:check-parallel-slas exited non-zero. Output: {$output}"));
+            });
         // 2) the follow-ups that genuinely need a schedule rather than an
         // event: outage detection/compensation, the Admin's late-review
         // reminders for auto-approvals still awaiting review, and the

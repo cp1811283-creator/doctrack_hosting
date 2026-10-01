@@ -39,10 +39,22 @@ class CheckParallelSlas extends Command
 
     public function handle(): int
     {
-        $expired = DocumentAssignment::where('individual_status', 'pending')
-            ->where('sla_expires_at', '<', now())
-            ->with(['stage', 'document', 'approver'])
-            ->get();
+        try {
+            $expired = DocumentAssignment::where('individual_status', 'pending')
+                ->where('sla_expires_at', '<', now())
+                ->with(['stage', 'document', 'approver'])
+                ->get();
+        } catch (\Throwable $e) {
+            // Previously uncaught: a DB hiccup here crashed the whole sweep
+            // with no per-seat context, and the trace only ever reached an
+            // ephemeral container log Railway doesn't surface. Report it so
+            // Sentry actually sees it, instead of a bare "FAIL" with nothing
+            // to diagnose from.
+            report($e);
+            $this->error("Could not fetch overdue assignments: {$e->getMessage()}");
+
+            return self::FAILURE;
+        }
 
         $autoApproved = 0;
         $failed = 0;
