@@ -274,7 +274,7 @@ class WorkflowService
                     'exception' => $e->getMessage(),
                 ]);
 
-                return $this->failExtraction($document, $originator, null);
+                return $this->failExtraction($document, $originator, null, $file->getClientOriginalExtension());
             }
 
             $document->ocr_text = $extraction['text'];
@@ -285,7 +285,7 @@ class WorkflowService
             // instead of running it through category validation and
             // surfacing a confusing "0 words; minimum 30" message.
             if (mb_strlen(trim($extraction['text'])) < self::MIN_EXTRACTED_CHARS) {
-                return $this->failExtraction($document, $originator, $extraction['failure_reason'] ?? null);
+                return $this->failExtraction($document, $originator, $extraction['failure_reason'] ?? null, $file->getClientOriginalExtension());
             }
 
             // 3.3 — classification. Same reasoning as the extraction
@@ -430,12 +430,12 @@ class WorkflowService
      * point (see ingest()'s docblock on the try/catch), so the row must
      * survive to keep pointing at it.
      */
-    private function failExtraction(DocumentRepository $document, User $originator, ?string $reason): DocumentRepository
+    private function failExtraction(DocumentRepository $document, User $originator, ?string $reason, ?string $extension = null): DocumentRepository
     {
         $document->ml_category = null;
         $document->ml_confidence = 0;
         $document->is_validated = false;
-        $document->validation_errors = [$this->extractionFailureMessage($reason)];
+        $document->validation_errors = [$this->extractionFailureMessage($reason, $extension ? strtolower($extension) : null)];
         $document->global_status = 'processing';
         $document->save();
 
@@ -489,8 +489,19 @@ class WorkflowService
      * TextExtractionService rather than a generic hedge ("may not be
      * installed") when the real cause is already known.
      */
-    private function extractionFailureMessage(?string $reason): string
+    private function extractionFailureMessage(?string $reason, ?string $extension = null): string
     {
+        // Legacy .doc was never given a real digital-extraction path (see
+        // TextExtractionService::extract()) — it always falls through to
+        // OCR, which fails because OCR reads images, not a Word binary.
+        // That's a format .doc was never going to succeed at, not a
+        // corrupted/blank/image-format problem, so it gets its own message
+        // rather than reusing the OCR-failure wording below.
+        if ($extension === 'doc') {
+            return 'Legacy .doc files are not supported — please re-save this file as .docx in Word (File > Save As > '.
+                'Word Document) and re-upload it.';
+        }
+
         return match ($reason) {
             'ocr_binary_missing' => 'This file needs OCR to read (it looks like a scanned image or non-searchable PDF), but the '.
                 'OCR engine is not installed on the server yet — an Administrator needs to install the system '.

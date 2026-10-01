@@ -49,6 +49,17 @@ window.Echo = new Echo({
     wssPort: import.meta.env.VITE_REVERB_PORT ?? 443,
     forceTLS: (import.meta.env.VITE_REVERB_SCHEME ?? 'https') === 'https',
     enabledTransports: ['ws', 'wss'],
+    // Split hosting (e.g. Railway) routes this connection through the
+    // platform's own edge proxy, which can close a WebSocket after a
+    // shorter idle period than pusher-js's 120s default ping interval —
+    // the proxy kills it before the client ever gets a chance to prove
+    // it's alive, which is why the "Reconnecting" banner (app.js's
+    // state_change handler) flickers on Railway but never on localhost
+    // (a direct connection with no intermediary idle timeout). Pinging
+    // every 30s instead keeps the socket active well before any such
+    // proxy would consider it idle.
+    activityTimeout: 30000,
+    pingTimeout: 15000,
     auth: {
         headers: {
             'X-CSRF-TOKEN': csrfToken,
