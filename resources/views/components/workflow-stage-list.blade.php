@@ -51,10 +51,17 @@
     // — see ApprovalForecastService::estimateFor()'s identical comment
     // for why: desired_routing defaults to 'auto' at the DB level, but an
     // unrefreshed in-memory model reads it as null until reloaded.
+    //
+    // is_archived=false (confirmed real bug, 2026-10-03): neither
+    // configured() nor forCategory() filter archived status, so this was
+    // the one place in the app that kept showing an archived stage forever
+    // regardless of category or document — every other stage-aware query
+    // (WorkflowService::routeToWorkflow(), openFinalApprovalIfReady(), …)
+    // already excludes it; this component was the one that got missed.
     $allStages = match(true) {
         !$document->ml_category => collect(),
         in_array($document->desired_routing, ['custom', 'unrelated'], true) => \App\Models\WorkflowStage::where('document_id', $document->document_id)->orderBy('sequence_order')->get(),
-        default => \App\Models\WorkflowStage::configured()->forCategory($document->ml_category)->get(),
+        default => \App\Models\WorkflowStage::configured()->forCategory($document->ml_category)->where('is_archived', false)->get(),
     };
     $assignmentsByStage = $document->assignments->groupBy('stage_id');
     $currentUserId = auth()->id();

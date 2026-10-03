@@ -10,11 +10,16 @@ function violationIn(string $category, string $stageName = 'Review'): SlaViolati
 {
     $originator = User::factory()->originator()->create();
     $approver = User::factory()->approver($category)->create();
-    $stage = WorkflowStage::create(['document_category' => $category, 'stage_name' => $stageName, 'sequence_order' => 1]);
+    // firstOrCreate, not create — this helper is called more than once per
+    // test with the same (category, stageName) defaults, and a real unique
+    // constraint on active category-wide stages (added 2026-10-03, after a
+    // genuine production duplicate-stage bug) now correctly catches what a
+    // second create() call here would be: a real duplicate stage.
+    $stage = WorkflowStage::firstOrCreate(['document_category' => $category, 'stage_name' => $stageName], ['sequence_order' => 1]);
     $document = DocumentRepository::create([
         'originator_id' => $originator->user_id,
-        'title' => "{$category}-" . uniqid() . '.txt',
-        'file_path' => 'documents/' . uniqid() . '.txt',
+        'title' => "{$category}-".uniqid().'.txt',
+        'file_path' => 'documents/'.uniqid().'.txt',
         'mime_type' => 'text/plain',
         'due_date' => now()->addDay(),
         'upload_date' => now(),

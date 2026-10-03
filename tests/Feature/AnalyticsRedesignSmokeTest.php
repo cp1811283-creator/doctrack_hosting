@@ -3,6 +3,8 @@
 use App\Models\DocumentRepository;
 use App\Models\SlaViolation;
 use App\Models\User;
+use Carbon\Carbon;
+use Illuminate\Support\Str;
 
 /**
  * upload_date is deliberately NOT mass-assignable on DocumentRepository
@@ -14,7 +16,7 @@ use App\Models\User;
  * pattern already used in tests/Feature/CalendarDrilldownTest.php)
  * instead of create()'s array.
  */
-function analyticsDoc(array $attributes, \Carbon\Carbon $uploadDate): DocumentRepository
+function analyticsDoc(array $attributes, Carbon $uploadDate): DocumentRepository
 {
     $doc = DocumentRepository::create($attributes);
     $doc->upload_date = $uploadDate;
@@ -113,7 +115,7 @@ it('shows the Day tab as a single day broken into hourly buckets, zero-filling s
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
-    $this->travelTo(\Carbon\Carbon::parse('2026-08-10 20:00:00'));
+    $this->travelTo(Carbon::parse('2026-08-10 20:00:00'));
 
     // Two uploads several hours apart on the same day, with a silent hour
     // between them — resolves the old symptom of the chart's real activity
@@ -142,7 +144,7 @@ it('summarizes the Day tab KPI tiles from the whole day, not just the most recen
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
-    $this->travelTo(\Carbon\Carbon::parse('2026-08-10 20:00:00'));
+    $this->travelTo(Carbon::parse('2026-08-10 20:00:00'));
 
     // Three uploads earlier today, none in the last hour — a KPI tile
     // driven off only the most recent bucket would show 0 uploaded; the
@@ -168,7 +170,7 @@ it('never lets the SLA Violation Rate KPI exceed 100%, even when one document ha
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
-    $this->travelTo(\Carbon\Carbon::parse('2026-08-10 20:00:00'));
+    $this->travelTo(Carbon::parse('2026-08-10 20:00:00'));
 
     // A single decided document — but with THREE separate violation
     // events logged against it (one per approver who independently blew
@@ -201,11 +203,58 @@ it('never lets the SLA Violation Rate KPI exceed 100%, even when one document ha
         ->and($rate)->toBe(100.0);
 });
 
+it('excludes auto-approved documents from Avg. Time to Decide, since that gap is never a real human decision time', function () {
+    // Regression coverage for a real reported bug (confirmed 2026-10-03):
+    // an auto-approved document's upload-to-decision gap is either near-
+    // instant (no eligible approver) or the full SLA window (a missed
+    // deadline) — folding it into the same average as genuine human
+    // decisions produced a number that honestly answered neither question.
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+
+    $this->travelTo(Carbon::parse('2026-08-10 20:00:00'));
+
+    // updated_at is a real Eloquent-managed timestamp — like upload_date,
+    // passing it inside create([...]) is silently overwritten by the
+    // auto-touch on save(), so it's set afterward via a raw query-builder
+    // update() (bypasses Eloquent's timestamp management entirely),
+    // confirmed necessary by this test actually failing against the
+    // auto-touched value first.
+    //
+    // A human decision taking 10 minutes.
+    $human = analyticsDoc([
+        'originator_id' => $originator->user_id, 'title' => 'human-decided.txt', 'file_path' => 'documents/hd.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+        'global_status' => 'approved', 'ml_category' => 'Job Order',
+    ], now()->copy()->setTime(9, 0));
+    DocumentRepository::where('document_id', $human->document_id)->update(['updated_at' => now()->copy()->setTime(9, 10)]);
+
+    // An auto-approval that sat for the better part of a day (a missed
+    // SLA window) — would badly skew a combined average upward.
+    $auto = analyticsDoc([
+        'originator_id' => $originator->user_id, 'title' => 'auto-approved.txt', 'file_path' => 'documents/aa.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+        'global_status' => 'auto_approved', 'ml_category' => 'Job Order',
+    ], now()->copy()->setTime(9, 0));
+    DocumentRepository::where('document_id', $auto->document_id)->update(['updated_at' => now()->copy()->setTime(18, 0)]);
+
+    $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
+    $response->assertOk();
+
+    preg_match('/AVG\. TIME TO DECIDE<\/p>.*?tabular-nums">([\w\s]+?)</is', $response->getContent(), $matches);
+    expect($matches)->toHaveCount(2);
+
+    // 10 minutes — the human decision alone, not blended with the ~9-hour
+    // auto-approval gap (which would pull a combined average well past an
+    // hour).
+    expect(trim($matches[1]))->toBe('10m');
+});
+
 it('drops all-zero periods from the detail table while the chart itself still plots every period', function () {
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
-    $this->travelTo(\Carbon\Carbon::parse('2026-08-10 20:00:00'));
+    $this->travelTo(Carbon::parse('2026-08-10 20:00:00'));
 
     // One upload at 9 AM — every other hour in the day stays all-zero.
     analyticsDoc([
@@ -224,7 +273,7 @@ it('drops all-zero periods from the detail table while the chart itself still pl
 
     // But the detail table specifically must NOT render a row for that
     // same silent hour — only the row(s) with real activity.
-    $tableSection = \Illuminate\Support\Str::after($response->getContent(), 'View detailed breakdown');
+    $tableSection = Str::after($response->getContent(), 'View detailed breakdown');
     expect($tableSection)->not->toContain('3:00 AM')
         ->and($tableSection)->toContain('9:00 AM');
 });

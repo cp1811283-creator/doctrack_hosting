@@ -261,6 +261,20 @@ class ArchiveController extends Controller
         AuditLog::record($user->user_id, $document->document_id, 'archive_download',
             "{$user->full_name} downloaded '{$document->title}' from the archive.");
 
+        // A .docx is kept surgically in sync with any approved revision
+        // (see WorkflowService::saveDocxRevision()) — the stored file
+        // genuinely is the current document. Every other type only ever
+        // had its extracted text revised (see DocumentController::
+        // viewFile()'s matching comment), so downloading the raw file
+        // here would hand out a stale, un-revised copy — the text IS the
+        // document for these types now.
+        if (! $document->isRichDocx()) {
+            return response($document->ocr_text ?? '', 200, [
+                'Content-Type' => 'text/plain; charset=UTF-8',
+                'Content-Disposition' => 'attachment; filename="'.($document->original_filename ?? $document->title).'"',
+            ]);
+        }
+
         return Storage::download($document->file_path, $document->original_filename ?? $document->title);
     }
 

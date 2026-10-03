@@ -2,6 +2,8 @@
 
 use App\Models\DocumentRepository;
 use App\Models\User;
+use App\Services\ClassificationService;
+use Illuminate\Http\UploadedFile;
 
 function unrelatedDisplayDoc(User $originator, bool $pending = false): DocumentRepository
 {
@@ -11,7 +13,7 @@ function unrelatedDisplayDoc(User $originator, bool $pending = false): DocumentR
         'ml_category' => 'Job Order', 'ml_confidence' => 42, 'is_validated' => true, 'due_date' => now()->addDay(),
         'global_status' => 'classified_validated', 'desired_routing' => 'unrelated',
         'pending_custom_routing_at' => $pending ? now() : null,
-        'custom_routed' => !$pending,
+        'custom_routed' => ! $pending,
     ]);
 }
 
@@ -66,9 +68,14 @@ test('the tracking page shows Other as the category, plus the classifier\'s non-
 test('the upload confirmation message says "marked as Other" for an unrelated upload, not "classified as Job Order"', function () {
     $originator = User::factory()->originator()->create();
 
-    $mock = Mockery::mock(App\Services\ClassificationService::class);
+    $mock = Mockery::mock(ClassificationService::class);
     $mock->shouldReceive('classify')->andReturn(['category' => 'Job Order', 'confidence' => 42, 'margin' => 5.0, 'model_id' => null]);
-    app()->instance(App\Services\ClassificationService::class, $mock);
+    // WorkflowService::ingest() dispatches CheckAutoTrainDue after every
+    // successful ingest (QUEUE_CONNECTION=sync in tests runs it inline,
+    // against this same mocked instance) — irrelevant to what this test
+    // actually checks, but a strict mock throws on any unstubbed call.
+    $mock->shouldReceive('autoTrainIfDue')->andReturn(null);
+    app()->instance(ClassificationService::class, $mock);
 
     $content = str_repeat('This is a perfectly ordinary internal memo about scheduling and staffing. ', 5);
 
@@ -82,13 +89,13 @@ test('the upload confirmation message says "marked as Other" for an unrelated up
     Carbon\Carbon::setTestNow(Carbon\Carbon::parse('2026-08-12 10:00:00')); // Wednesday, business hours
 
     $response = $this->actingAs($originator)->post(route('originator.documents.store'), [
-        'files' => [\Illuminate\Http\UploadedFile::fake()->createWithContent('memo.txt', $content)],
+        'files' => [UploadedFile::fake()->createWithContent('memo.txt', $content)],
         'due_date' => now()->addHours(4)->format('Y-m-d\TH:i'), // comfortably within the same business day
         'routing_mode' => 'unrelated',
     ]);
 
     $response->assertRedirect(route('originator.dashboard'));
     $response->assertSessionHas('status', function ($status) {
-        return str_contains($status, 'marked as Other') && !str_contains($status, "classified as 'Job Order'");
+        return str_contains($status, 'marked as Other') && ! str_contains($status, "classified as 'Job Order'");
     });
 });

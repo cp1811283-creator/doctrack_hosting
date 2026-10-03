@@ -25,6 +25,13 @@ function ingestWithThrowingService(string $throwingService): DocumentRepository
     $mock = Mockery::mock($throwingService);
     $method = $throwingService === TextExtractionService::class ? 'extract' : 'classify';
     $mock->shouldReceive($method)->andThrow(new RuntimeException('simulated failure'));
+    // WorkflowService::ingest() dispatches CheckAutoTrainDue after every
+    // call regardless of outcome (QUEUE_CONNECTION=sync in tests runs it
+    // inline) — only relevant when mocking ClassificationService itself,
+    // since that's the service CheckAutoTrainDue calls autoTrainIfDue() on.
+    if ($throwingService === ClassificationService::class) {
+        $mock->shouldReceive('autoTrainIfDue')->andReturn(null);
+    }
     app()->instance($throwingService, $mock);
 
     return app(WorkflowService::class)->ingest(

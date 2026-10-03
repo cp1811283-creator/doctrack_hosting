@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Events\AccountDeactivated;
+use App\Events\DocumentStatusChanged;
 use App\Events\SystemSettingsChanged;
 use App\Models\AdminViolation;
 use App\Models\AuditLog;
@@ -357,8 +358,14 @@ class AdminController extends Controller
      */
     private function analyticsAggregateRow(array $rows): object
     {
+        // Weighted by each bucket's own HUMAN-decided count (approved -
+        // auto_approved, + rejected) — matches avg_minutes itself now only
+        // measuring human decisions (see analyticsBuckets()); weighting by
+        // the old combined approved+rejected count would average against a
+        // larger population than avg_minutes was actually computed from.
+        $humanDecidedCount = fn ($r) => ($r->approved - $r->auto_approved) + $r->rejected;
         $decidedRows = array_filter($rows, fn ($r) => $r->avg_minutes !== null);
-        $totalDecided = array_sum(array_map(fn ($r) => $r->approved + $r->rejected, $decidedRows));
+        $totalDecided = array_sum(array_map($humanDecidedCount, $decidedRows));
 
         return (object) [
             'bucket' => null,
@@ -367,7 +374,7 @@ class AdminController extends Controller
             'rejected' => array_sum(array_map(fn ($r) => $r->rejected, $rows)),
             'auto_approved' => array_sum(array_map(fn ($r) => $r->auto_approved, $rows)),
             'avg_minutes' => $totalDecided > 0
-                ? (int) round(array_sum(array_map(fn ($r) => $r->avg_minutes * ($r->approved + $r->rejected), $decidedRows)) / $totalDecided)
+                ? (int) round(array_sum(array_map(fn ($r) => $r->avg_minutes * $humanDecidedCount($r), $decidedRows)) / $totalDecided)
                 : null,
             'violations' => array_sum(array_map(fn ($r) => $r->violations, $rows)),
             // Safe to sum across buckets — a document is decided exactly
@@ -514,6 +521,7 @@ class AdminController extends Controller
 
         return collect($bucketKeys)->map(function ($bucket) use ($uploadBuckets, $decidedBuckets, $violationBuckets, $violatedDocIds) {
             $decided = $decidedBuckets->get($bucket, collect());
+            $humanDecided = $decided->where('global_status', '!=', 'auto_approved');
 
             return (object) [
                 'bucket' => $bucket,
@@ -526,8 +534,17 @@ class AdminController extends Controller
                 'human_approved' => $decided->where('global_status', 'approved')->count(),
                 'rejected' => $decided->where('global_status', 'rejected')->count(),
                 'auto_approved' => $decided->where('global_status', 'auto_approved')->count(),
-                'avg_minutes' => $decided->isNotEmpty()
-                    ? (int) round($decided->avg(fn ($d) => $d->upload_date->diffInMinutes($d->updated_at)))
+                // Human decisions only (approved OR rejected by an actual
+                // person) — an auto-approved document's upload-to-decision
+                // gap is either near-instant (no eligible approver) or the
+                // full SLA window (a missed deadline), neither of which is
+                // a real decision time; averaging it in with genuine human
+                // review times produced a number that honestly answered
+                // neither question. Same "subtract auto_approved out"
+                // discipline analyticsKpis() already applies to the
+                // Approval Rate tile, for the identical reason.
+                'avg_minutes' => $humanDecided->isNotEmpty()
+                    ? (int) round($humanDecided->avg(fn ($d) => $d->upload_date->diffInMinutes($d->updated_at)))
                     : null,
                 // Raw violation-event count in this period — a distinct,
                 // still-correct metric on its own (shown in the detail
@@ -941,9 +958,19 @@ class AdminController extends Controller
             // account, so a second can never be created here, even by a
             // crafted request bypassing the form's own dropdown.
             'role' => ['required', 'in:originator,approver'],
+            // Not required_if for a head — see WorkflowService::
+            // eligibleApproversForStage()'s docblock: a head's Final
+            // Approval eligibility is matched by level+department alone
+            // now, across every category, so pinning them to one category
+            // here would just be a leftover restriction the routing logic
+            // no longer even looks at.
             'assigned_category' => [
                 'nullable',
-                'required_if:role,approver',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('role') === 'approver' && $request->input('level') !== 'head' && blank($value)) {
+                        $fail('The assigned category field is required.');
+                    }
+                },
                 'in:'.implode(',', ValidationService::knownCategories()),
             ],
             'department' => [
@@ -964,6 +991,7 @@ class AdminController extends Controller
         ]);
 
         $isApprover = $validated['role'] === 'approver';
+        $isHead = $isApprover && $validated['level'] === 'head';
 
         $user = User::create([
             'username' => $validated['username'],
@@ -974,7 +1002,10 @@ class AdminController extends Controller
             // Admin and Originator accounts always get null here regardless
             // of what was submitted — Originators upload any document type
             // and are classified automatically, so they are never restricted.
-            'assigned_category' => $isApprover ? $validated['assigned_category'] : null,
+            // A head is also always null here, same reasoning as above —
+            // whatever the (hidden, for a head) form field happened to
+            // submit is ignored, not just unused.
+            'assigned_category' => $isApprover && ! $isHead ? $validated['assigned_category'] : null,
             'department' => $isApprover ? $validated['department'] : null,
             'level' => $isApprover ? $validated['level'] : null,
             'password_hash' => Hash::make($validated['password']),
@@ -982,14 +1013,19 @@ class AdminController extends Controller
             'is_active' => true,
         ]);
 
-        if ($user->role === 'approver' && ! empty($validated['stage_ids'])) {
+        if ($user->role === 'approver' && ! $isHead && ! empty($validated['stage_ids'])) {
             $validStageIds = $this->stageIdsOwnedByDepartment($user->assigned_category, $user->department, $validated['stage_ids']);
             $user->workflowStages()->sync($validStageIds);
         }
 
+        $accountDetail = match (true) {
+            $user->role !== 'approver' => '.',
+            $isHead => ", department '{$user->department}' ({$user->level}) — Final Approval across every category.",
+            default => ", assigned category '{$user->assigned_category}', department '{$user->department}' ({$user->level}).",
+        };
+
         AuditLog::record($request->user()->user_id, null, 'user_create',
-            "Created account #{$user->user_id} ({$user->username}) with role '{$user->role}'".
-            ($user->assigned_category ? ", assigned category '{$user->assigned_category}', department '{$user->department}' ({$user->level})." : '.'));
+            "Created account #{$user->user_id} ({$user->username}) with role '{$user->role}'{$accountDetail}");
 
         // Login is blocked until this is clicked (see AuthController::
         // login()) — sent immediately so the account is usable as soon as
@@ -1060,16 +1096,29 @@ class AdminController extends Controller
         abort_unless($user->role === 'approver', 422, 'Only approver accounts have stage assignments.');
 
         $validated = $request->validate([
-            'assigned_category' => ['required', 'in:'.implode(',', ValidationService::knownCategories())],
+            // Not required for a head — see storeUser()'s matching rule and
+            // WorkflowService::eligibleApproversForStage()'s docblock.
+            'assigned_category' => [
+                'nullable',
+                function ($attribute, $value, $fail) use ($request) {
+                    if ($request->input('level') !== 'head' && blank($value)) {
+                        $fail('The assigned category field is required.');
+                    }
+                },
+                'in:'.implode(',', ValidationService::knownCategories()),
+            ],
             'department' => ['required', 'in:'.implode(',', User::knownDepartments())],
             'level' => ['required', 'in:'.implode(',', User::knownLevels())],
             'stage_ids' => ['nullable', 'array'],
             'stage_ids.*' => ['integer', 'exists:workflow_stages,stage_id'],
         ]);
 
-        $categoryChanged = $validated['assigned_category'] !== $user->assigned_category;
+        $isHead = $validated['level'] === 'head';
+        $newCategory = $isHead ? null : $validated['assigned_category'];
+
+        $categoryChanged = $newCategory !== $user->assigned_category;
         $departmentChanged = $validated['department'] !== $user->department;
-        $resetPicks = $categoryChanged || $departmentChanged;
+        $resetPicks = $categoryChanged || $departmentChanged || $isHead;
         $oldCategory = $user->assigned_category;
         $oldDepartment = $user->department;
 
@@ -1077,22 +1126,29 @@ class AdminController extends Controller
         // actually submitted — the dropdowns and stage checkboxes are only
         // kept in sync client-side, so a tampered request could otherwise
         // submit stage IDs from a different category or a department that
-        // doesn't own them at all.
-        $validStageIds = $this->stageIdsOwnedByDepartment($validated['assigned_category'], $validated['department'], $validated['stage_ids'] ?? []);
+        // doesn't own them at all. Skipped entirely for a head — stage picks
+        // never apply to them (see eligibleApproversForStage()), so there's
+        // nothing to validate against a category that's about to be null.
+        $validStageIds = $isHead
+            ? collect()
+            : $this->stageIdsOwnedByDepartment($newCategory, $validated['department'], $validated['stage_ids'] ?? []);
 
-        $user->assigned_category = $validated['assigned_category'];
+        $user->assigned_category = $newCategory;
         $user->department = $validated['department'];
         $user->level = $validated['level'];
         $user->save();
 
         $user->workflowStages()->sync($resetPicks ? [] : $validStageIds);
 
-        $description = $resetPicks
-            ? "Reassigned {$user->full_name} (#{$user->user_id}) from '{$oldCategory}'/'{$oldDepartment}' to ".
-                "'{$validated['assigned_category']}'/'{$validated['department']}' ({$validated['level']}). ".
-                'Stage assignments reset to unrestricted (all stages the new department owns in this category).'
-            : "Updated stage assignments for {$user->full_name} (#{$user->user_id}) [{$validated['department']}, {$validated['level']}]: ".
-                ($validStageIds->isEmpty() ? 'all stages in category (no restriction).' : implode(', ', $validStageIds->all()));
+        $description = match (true) {
+            $isHead => "Reassigned {$user->full_name} (#{$user->user_id}) to head of '{$validated['department']}' — ".
+                'eligible for Final Approval across every category, no category or stage restrictions.',
+            $resetPicks => "Reassigned {$user->full_name} (#{$user->user_id}) from '{$oldCategory}'/'{$oldDepartment}' to ".
+                "'{$newCategory}'/'{$validated['department']}' ({$validated['level']}). ".
+                'Stage assignments reset to unrestricted (all stages the new department owns in this category).',
+            default => "Updated stage assignments for {$user->full_name} (#{$user->user_id}) [{$validated['department']}, {$validated['level']}]: ".
+                ($validStageIds->isEmpty() ? 'all stages in category (no restriction).' : implode(', ', $validStageIds->all())),
+        };
 
         AuditLog::record($request->user()->user_id, null, 'assign_stages', $description);
 
@@ -1215,16 +1271,6 @@ class AdminController extends Controller
     // reason staging is split by category at all (see stageTrainingSamples()'s
     // docblock) — not a total-staged cap.
     private const TRAINING_BATCH_UPLOAD_LIMIT = 20;
-
-    // Above this word-overlap fraction, a newly staged sample is flagged as
-    // a likely near-duplicate of one already staged in the same category
-    // (see stageTrainingSamples()). Chosen with headroom above what
-    // genuinely different same-category documents naturally share — real,
-    // distinct business documents in one category (different department,
-    // item, dates) were observed sharing up to ~80% of their vocabulary
-    // just from required boilerplate + domain terms; 0.85 flags true
-    // near-copies without punishing legitimate variety.
-    private const NEAR_DUPLICATE_THRESHOLD = 0.85;
 
     public function mlTraining(Request $request)
     {
@@ -1362,7 +1408,7 @@ class AdminController extends Controller
 
             foreach ($existingSamples as $existing) {
                 $similarity = $this->classifier->wordOverlapSimilarity($text, $existing->extracted_text);
-                if ($similarity >= self::NEAR_DUPLICATE_THRESHOLD) {
+                if ($similarity >= config('ml.near_duplicate_threshold', 0.85)) {
                     $duplicateWarnings[] = sprintf(
                         '"%s" looks like a near-duplicate of already-staged "%s" (%d%% word overlap) — consider a more varied real example instead.',
                         $file->getClientOriginalName(),
@@ -1603,6 +1649,23 @@ class AdminController extends Controller
         if ($validated['outcome'] === 'confirmed') {
             AuditLog::record($admin->user_id, $document->document_id, 'admin_review',
                 "Confirmed auto-approved stage(s) '{$stageList}'.".($note ? " Note: \"{$note}\"" : ''));
+
+            // Confirmed 2026-10-03, a real reported bug: confirming only
+            // ever touched admin_reviewed_at on the ASSIGNMENT rows above —
+            // never global_status or disputed_at on $document itself, the
+            // only two columns DocumentRepository::booted() actually
+            // watches to decide whether to broadcast. DocumentRepository::
+            // display_status already correctly computes 'approved' the
+            // instant every auto-approved stage is reviewed (see its own
+            // accessor), so the status WAS already right on a fresh page
+            // load — this was purely a missing live push: an already-open
+            // originator/admin page had no way to know anything changed
+            // and kept showing the stale "Auto-Approved — Pending Review"
+            // badge until manually reloaded. Fired explicitly here, same
+            // event the dispute path below already gets for free (it
+            // happens to touch disputed_at, a real column the model hook
+            // does watch).
+            event(new DocumentStatusChanged($document));
 
             return back()->with('status', 'Marked as reviewed.');
         }
@@ -2094,6 +2157,11 @@ class AdminController extends Controller
                 'stages' => $rows->pluck('stage_name')->unique()->values(),
                 'isOpen' => $rows->contains(fn ($v) => is_null(optional($v->assignment)->admin_reviewed_at)),
                 'firstViolatedAt' => $rows->min('first_violated_at'),
+                // Null while still open — every stage resolves together via
+                // one review action (AdminController::reviewAutoApproval()),
+                // so max() across this document's rows is the one real
+                // moment it was resolved, not an approximation.
+                'resolvedAt' => $rows->max('resolved_at'),
             ])
             ->sortByDesc('firstViolatedAt')
             ->values();

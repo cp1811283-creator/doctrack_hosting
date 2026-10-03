@@ -71,19 +71,54 @@
                      blade.php for the identical convention). --}}
                 <tr class="archive-row hover:bg-surface-50 transition-colors cursor-pointer" data-row-group="{{ $doc->document_id }}"
                     onclick="openKpiDrilldown('document-tracker', '{{ addslashes($doc->title) }}', '{{ route('documents.trackerModal', $doc) }}')">
-                    <td class="px-4 py-3 font-medium text-surface-800 max-w-xs truncate">
-                        {{-- Feature: opens the shared Document Tracker
-                             popup — see admin/partials/audit-row.blade.php's
-                             matching comment for why a popup instead of
-                             expanding this row in place. --}}
-                        <svg class="inline-block w-3 h-3 mr-1 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 4.5a3 3 0 013-3h9a3 3 0 013 3v15a3 3 0 01-3 3h-9a3 3 0 01-3-3v-15z"/><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 8.25h7.5M8.25 12h7.5M8.25 15.75h4.5"/></svg>
-                        {{ $doc->title }}
-                        @if($doc->is_legacy_import)
-                            <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-processing-50 text-processing-700 align-middle">Imported</span>
-                        @endif
-                        @if($doc->disputed_at)
-                            <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-rejected-50 text-rejected-700 align-middle">Disputed</span>
-                        @endif
+                    {{-- flex + min-w-0, not max-w-xs+truncate on the whole
+                         cell (confirmed real bug, 2026-10-03: a long title
+                         filled that cell's truncated width entirely and
+                         silently clipped every badge after it out of view —
+                         present in the DOM, just never actually visible).
+                         Title gets its OWN truncating span (min-w-0 lets it
+                         actually shrink inside a flex row instead of
+                         forcing the row wider); badges sit outside it as
+                         flex-shrink-0 siblings, so they're never the thing
+                         that gets sacrificed for space. --}}
+                    <td class="px-4 py-3 font-medium text-surface-800 max-w-xs">
+                        <div class="flex items-center gap-1.5 min-w-0">
+                            {{-- Feature: opens the shared Document Tracker
+                                 popup — see admin/partials/audit-row.blade.php's
+                                 matching comment for why a popup instead of
+                                 expanding this row in place. --}}
+                            <span class="truncate min-w-0" title="{{ $doc->title }}">
+                                <svg class="inline-block w-3 h-3 mr-1 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 4.5a3 3 0 013-3h9a3 3 0 013 3v15a3 3 0 01-3 3h-9a3 3 0 01-3-3v-15z"/><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 8.25h7.5M8.25 12h7.5M8.25 15.75h4.5"/></svg>
+                                {{ $doc->title }}
+                            </span>
+                            @if($doc->is_legacy_import)
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-processing-50 text-processing-700 flex-shrink-0">Imported</span>
+                            @endif
+                            {{-- global_status (not display_status) —
+                                 deliberately stays 'auto_approved' forever
+                                 even once Admin reviews it (see
+                                 DocumentRepository::display_status's
+                                 accessor, which only upgrades the DISPLAYED
+                                 label to "Approved" once reviewed, never the
+                                 underlying column) — this badge is about
+                                 provenance (a human never actually decided
+                                 this one), which review status doesn't
+                                 change. Previously missing entirely: Archive
+                                 gave no way to tell an auto-approved
+                                 document apart from a normally human-
+                                 approved one. Amber (processing), not
+                                 green — matches the same "Auto-Approved —
+                                 Pending Review" badge color used everywhere
+                                 else this status shows, so it reads as
+                                 visually distinct from a genuinely human-
+                                 approved document, not just textually. --}}
+                            @if($doc->global_status === 'auto_approved')
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-processing-50 text-processing-700 flex-shrink-0" title="No approver decided this — the system auto-approved it after the SLA window passed.">Auto-Approved</span>
+                            @endif
+                            @if($doc->disputed_at)
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-rejected-50 text-rejected-700 flex-shrink-0">Disputed</span>
+                            @endif
+                        </div>
                     </td>
                     <td class="px-4 py-3 text-surface-600">{{ $doc->ml_category }}</td>
                     <td class="px-4 py-3 text-surface-500">{{ $doc->originator->full_name ?? '—' }}</td>

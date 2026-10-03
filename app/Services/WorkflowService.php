@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\AssignmentRouted;
 use App\Events\DocumentStatusChanged;
+use App\Jobs\CheckAutoTrainDue;
 use App\Jobs\EscalateAssignmentJob;
 use App\Jobs\RetrainApprovalTimeModel;
 use App\Models\AuditLog;
@@ -19,6 +20,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 /**
@@ -100,6 +102,7 @@ class WorkflowService
         private ValidationService $validator,
         private BusinessHoursService $businessHours,
         private MalwareScanService $malwareScanner,
+        private DocxRichContentService $docxRichContent,
     ) {}
 
     /**
@@ -208,7 +211,7 @@ class WorkflowService
      */
     public function ingest(UploadedFile $file, User $originator, string $dueDate, ?int $batchId = null, ?DocumentRepository $revisionOf = null, bool $requiresPrinting = false, string $routingMode = 'auto'): DocumentRepository
     {
-        return DB::transaction(function () use ($file, $originator, $dueDate, $batchId, $revisionOf, $requiresPrinting, $routingMode) {
+        $document = DB::transaction(function () use ($file, $originator, $dueDate, $batchId, $revisionOf, $requiresPrinting, $routingMode) {
             // Default disk (config('filesystems.default')), not hardcoded
             // 'local' — respects FILESYSTEM_DISK, so uploads actually land
             // wherever that's configured (S3-compatible object storage in
@@ -400,6 +403,17 @@ class WorkflowService
 
             return $document->fresh();
         });
+
+        // Dispatched after the transaction commits, not from inside it —
+        // this document's own routing outcome doesn't actually matter (the
+        // job re-checks overall eligibility across every document, not just
+        // this one), but dispatching from inside a transaction that then
+        // rolled back would fire for a change that never really happened.
+        // See CheckAutoTrainDue's own docblock for why this exists
+        // alongside (not instead of) the scheduled sweep.
+        CheckAutoTrainDue::dispatch();
+
+        return $document;
     }
 
     /**
@@ -703,16 +717,30 @@ class WorkflowService
      * category's true final stage already carries today stays narrowly
      * scoped to the actual concern. Every other stage is unaffected;
      * level has never gated those.
+     *
+     * Final Approval is ALSO category-agnostic for heads (confirmed bug,
+     * fixed 2026-10-03: every category's Final Approval stage requires a
+     * head, but assigned_category + per-stage picks together meant a head
+     * set up for Job Order was silently ineligible for every other
+     * category's Final Approval — those documents auto-approved with
+     * nobody actually reviewing them). A department head's authority isn't
+     * scoped to one category's pipeline the way a staff approver's is, so
+     * BOTH the assigned_category query filter and the explicit-stage-picks
+     * check below are skipped for Final Approval — heads are matched on
+     * level + department alone, full stop, same person for every category.
      */
     public function eligibleApproversForStage(string $category, WorkflowStage $stage): Collection
     {
         $stageDepartments = $stage->departmentNames();
         $isFinalApprovalStage = $stage->stage_name === 'Final Approval';
 
-        return User::where('role', 'approver')
-            ->where('is_active', true)
-            ->where('assigned_category', $category)
-            ->get()
+        $query = User::where('role', 'approver')->where('is_active', true);
+
+        if (! $isFinalApprovalStage) {
+            $query->where('assigned_category', $category);
+        }
+
+        return $query->get()
             ->filter(function (User $approver) use ($stage, $stageDepartments, $isFinalApprovalStage) {
                 if ($isFinalApprovalStage && $approver->level !== 'head') {
                     return false;
@@ -720,6 +748,10 @@ class WorkflowService
 
                 if ($stageDepartments !== [] && ! in_array($approver->department, $stageDepartments, true)) {
                     return false;
+                }
+
+                if ($isFinalApprovalStage) {
+                    return true;
                 }
 
                 $assignedStageIds = $approver->workflowStages()->pluck('workflow_stages.stage_id');
@@ -1725,6 +1757,72 @@ class WorkflowService
                 'revised_by' => $originator->user_id,
                 'previous_text' => $previousText,
                 'new_text' => $newText,
+            ]);
+            if ($resolved->isNotEmpty()) {
+                $revision->annotations()->attach($resolved->pluck('annotation_id'));
+            }
+
+            event(new DocumentStatusChanged($document));
+        });
+    }
+
+    /**
+     * The .docx equivalent of saveDocumentRevision() above — same
+     * "edit anywhere, mark off which flags this addresses" shape as
+     * every other file type's revision screen, except the editable
+     * surface is the real rendered document (see DocxRichContentService::
+     * render()'s $tagSegments) instead of a plain textarea, and only text
+     * content can change — images, tables, and formatting are never
+     * touched. $segmentTexts is every real text run's CURRENT content, in
+     * document order (exactly what the client reads back from each
+     * [data-seg] element — see tracking-content.blade.php); applyTextEdits()
+     * writes only the ones that actually differ straight into the real
+     * file and REJECTS the whole save (bubbles up to the controller as a
+     * 422) if the count no longer matches the file's own real text
+     * segments — that only happens if something besides text changed
+     * (an image/row/paragraph added or removed), which revision isn't
+     * meant to do. $resolvedAnnotationIds is independent of what text
+     * actually changed, same decoupling saveDocumentRevision() already
+     * has — checking a flag off just means "this save addresses it,"
+     * nothing more specific is required.
+     *
+     * @param  array<int, string>  $segmentTexts
+     * @param  array<int, int>  $resolvedAnnotationIds
+     */
+    public function saveDocxRevision(DocumentRepository $document, User $originator, array $segmentTexts, array $resolvedAnnotationIds): void
+    {
+        DB::transaction(function () use ($document, $originator, $segmentTexts, $resolvedAnnotationIds) {
+            $previousText = $document->ocr_text;
+
+            $absolutePath = Storage::path($document->file_path);
+            $newText = $this->docxRichContent->applyTextEdits($absolutePath, $segmentTexts);
+
+            $document->ocr_text = TextExtractionService::normalizeLineEndings($newText);
+            $document->save();
+
+            AuditLog::record($originator->user_id, $document->document_id, 'revision_saved',
+                "{$originator->full_name} revised the text of '{$document->title}'.");
+
+            $resolved = DocumentAnnotation::where('document_id', $document->document_id)
+                ->whereNull('resolved_at')
+                ->whereIn('annotation_id', $resolvedAnnotationIds)
+                ->with(['raisedBy', 'assignment.stage'])
+                ->get();
+
+            foreach ($resolved as $annotation) {
+                $annotation->resolved_at = now();
+                $annotation->save();
+
+                NotificationRecord::send($annotation->raised_by, $document->document_id,
+                    "'{$document->title}' (stage '{$annotation->assignment->stage->stage_name}') was revised to address ".
+                    "your flagged concern: \"{$annotation->comment}\" — please re-review.", 'high');
+            }
+
+            $revision = DocumentRevision::create([
+                'document_id' => $document->document_id,
+                'revised_by' => $originator->user_id,
+                'previous_text' => $previousText,
+                'new_text' => $document->ocr_text,
             ]);
             if ($resolved->isNotEmpty()) {
                 $revision->annotations()->attach($resolved->pluck('annotation_id'));

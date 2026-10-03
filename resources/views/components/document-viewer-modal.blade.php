@@ -7,11 +7,13 @@
     means no presence icon fetch happens there.
 
     Rendering strategy per mime type:
-      - application/pdf                                            -> <iframe> (native browser PDF viewer)
-      - image/*                                                    -> <img>
-      - text/plain                                                 -> fetched & shown as preformatted text
-      - .docx (wordprocessingml.document)                          -> fetched & converted to HTML client-side via mammoth.js
-      - anything else (legacy .doc, etc.)                          -> graceful fallback with an "open in new tab" link
+      - .docx (wordprocessingml.document) -> fetched as server-rendered HTML (DocxRichContentService, same as Review &
+        Comment), built from the real file (kept surgically in sync with any approved revision — see WorkflowService::
+        saveDocxRevision()).
+      - everything else (application/pdf, image/*, legacy .doc, text/plain) -> fetched & shown as preformatted text —
+        this same URL now serves the extracted (and possibly revised) TEXT for all of these, not the original file's
+        raw bytes, since text is the only thing ever revised for them — see DocumentController::viewFile()'s own
+        comment for why.
 
     Presence icon: while open, polls documents.presence every ~8s (see
     __pollPresence below) for who else is currently reviewing this exact
@@ -51,7 +53,7 @@
             </div>
             <div class="flex items-center gap-4 flex-shrink-0">
                 <a id="doc-viewer-newtab" href="#" target="_blank" rel="noopener" class="text-xs text-primary-700 hover:underline font-medium">Open in new tab</a>
-                <button type="button" onclick="window.print()" class="text-surface-400 hover:text-surface-700" aria-label="Print document" title="Print">
+                <button type="button" onclick="__printViewer()" class="text-surface-400 hover:text-surface-700" aria-label="Print document" title="Print">
                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.318 2.647a.75.75 0 01-.74.853H6.762a.75.75 0 01-.74-.853L6.34 18m11.32 0H6.34m10.94-9.75V4.243a.75.75 0 00-.75-.75H7.47a.75.75 0 00-.75.75V8.25m10.94 0H6.72"/>
                     </svg>
@@ -67,19 +69,27 @@
     </div>
 </div>
 
-{{-- Scopes window.print() to just the previewed document — hides
-     everything else on the page rather than printing the whole app shell
-     underneath the modal. --}}
+{{-- Printing copies the document into a clean print area appended to the
+     end of the page (see __printClone below), and hides everything else
+     with display:none — which, unlike visibility:hidden, removes the space
+     it occupied. Otherwise the hidden app layout left a blank first page
+     and pushed the document's content down. --}}
 <style>
     @media print {
-        body * { visibility: hidden; }
-        #doc-viewer-body, #doc-viewer-body * { visibility: visible; }
-        #doc-viewer-body { position: absolute; top: 0; left: 0; width: 100%; }
+        @page { margin: 12mm; }
+        body.printing-clone > *:not(#doc-print-root) { display: none !important; }
+        #doc-print-root { display: block !important; position: static !important; height: auto !important; max-height: none !important; overflow: visible !important; box-shadow: none !important; }
+        #doc-print-root * { box-shadow: none !important; }
+        #doc-print-root img, #doc-print-root table, #doc-print-root tr { break-inside: avoid; page-break-inside: avoid; }
+        #doc-print-root, #doc-print-root > div { padding: 0 !important; margin: 0 !important; max-width: none !important; border-radius: 0 !important; }
+        #doc-print-root .docx-page-divider { display: none !important; }
+        #doc-print-root .docx-page-gap { break-after: page; page-break-after: always; }
+        #doc-print-root .docx-figure { display: block; break-inside: avoid; page-break-inside: avoid; }
+        #doc-print-root img { max-height: 230mm !important; max-width: 100% !important; }
     }
 </style>
 
 <script>
-    let __mammothLoadPromise = null;
     let __presencePollTimer = null;
     let __presenceDocumentId = null;
 
@@ -158,19 +168,36 @@
         __presencePollTimer = setInterval(() => __pollPresence(url), 8000);
     }
 
-    function __loadMammoth() {
-        if (window.mammoth) return Promise.resolve();
-        if (__mammothLoadPromise) return __mammothLoadPromise;
+    // Marks the page as "printing the viewer" for exactly this print, so
+    // the Review & Comment popup underneath (which has its own print
+    // rule) is hidden from the print instead of duplicating its copy of
+    // the document. Cleared again the moment the print dialog closes.
+    // Copies $sourceEl's content into a clean print area appended to the
+    // page, prints just that, then removes it again. Used by this viewer
+    // AND the Review & Comment popup (see annotations-panel.blade.php) —
+    // both are fixed-height scrolling boxes, which is why printing them
+    // in place only ever produced the first screen's worth of content.
+    function __printClone(sourceEl) {
+        if (!sourceEl) return;
+        const root = document.createElement('div');
+        root.id = 'doc-print-root';
+        root.className = sourceEl.className;
+        root.setAttribute('style', sourceEl.getAttribute('style') || '');
+        root.innerHTML = sourceEl.innerHTML;
+        document.body.appendChild(root);
+        document.body.classList.add('printing-clone');
 
-        __mammothLoadPromise = new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.2/mammoth.browser.min.js';
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('Failed to load docx preview library.'));
-            document.head.appendChild(script);
-        });
+        const cleanup = () => {
+            root.remove();
+            document.body.classList.remove('printing-clone');
+        };
+        window.addEventListener('afterprint', cleanup, { once: true });
+        window.print();
+        cleanup();
+    }
 
-        return __mammothLoadPromise;
+    function __printViewer() {
+        __printClone(document.getElementById('doc-viewer-body'));
     }
 
     function __escapeHtml(str) {
@@ -240,38 +267,39 @@
 
         mimeType = mimeType || '';
 
+        // Only a real .docx is kept surgically in sync with any approved
+        // revision at its ORIGINAL file bytes (see WorkflowService::
+        // saveDocxRevision()) — every other type (.pdf, images, legacy
+        // .doc, .txt) only ever has its extracted TEXT revised, and this
+        // same URL now serves exactly that (see DocumentController::
+        // viewFile()'s matching comment) for anything that isn't .docx.
+        // So every one of those mime types renders identically here: the
+        // current (possibly revised) plain text, not the original file's
+        // own raw bytes — only .docx still needs its own real-file path,
+        // rendered server-side.
+        const isDocx = mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
         try {
-            if (mimeType === 'application/pdf') {
-                body.innerHTML = `<iframe id="doc-viewer-iframe" src="${freshUrl}" class="w-full h-full border-0" title="${filename || 'Document preview'}"></iframe>`;
-                // Printing before the iframe's own content has actually
-                // loaded would just print a blank page — wait for its
-                // load event rather than assuming synchronous readiness.
-                if (autoPrint) {
-                    document.getElementById('doc-viewer-iframe').addEventListener('load', () => window.print(), { once: true });
-                }
-            } else if (mimeType.startsWith('image/')) {
-                body.innerHTML = `<div class="w-full h-full flex items-center justify-center p-4">
-                    <img id="doc-viewer-img" src="${freshUrl}" alt="${filename || 'Document preview'}" class="max-w-full max-h-full object-contain rounded-lg shadow-card">
-                </div>`;
-                if (autoPrint) {
-                    document.getElementById('doc-viewer-img').addEventListener('load', () => window.print(), { once: true });
-                }
-            } else if (mimeType === 'text/plain') {
+            if (isDocx) {
+                // Same server-side renderer Review & Comment uses (images,
+                // tables, bold/italic, collapsed blank-paragraph gaps), so
+                // the two views match. Fetched via the same authorized
+                // endpoint, so review-session tracking still runs.
+                const htmlUrl = freshUrl + (freshUrl.includes('?') ? '&' : '?') + 'format=html';
+                const res = await fetch(htmlUrl);
+                if (!res.ok) throw new Error('Fetch failed');
+                const html = await res.text();
+                body.innerHTML = `<div class="bg-white mx-auto my-4 p-8 rounded-lg shadow-card text-base text-surface-800 leading-relaxed" style="max-width: 800px; white-space: pre-wrap;">${html}</div>`;
+                if (autoPrint) __printViewer();
+            } else {
                 const res = await fetch(freshUrl);
                 if (!res.ok) throw new Error('Fetch failed');
                 const text = await res.text();
-                body.innerHTML = `<pre class="p-6 text-xs text-surface-700 whitespace-pre-wrap font-mono">${__escapeHtml(text)}</pre>`;
-                if (autoPrint) window.print(); // content above is already synchronously in the DOM
-            } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-                await __loadMammoth();
-                const res = await fetch(freshUrl);
-                if (!res.ok) throw new Error('Fetch failed');
-                const arrayBuffer = await res.arrayBuffer();
-                const result = await window.mammoth.convertToHtml({ arrayBuffer });
-                body.innerHTML = `<div class="prose prose-sm max-w-none bg-white mx-auto my-4 p-8 rounded-lg shadow-card" style="max-width: 800px;">${result.value}</div>`;
-                if (autoPrint) window.print();
-            } else {
-                __showFallback(body, freshUrl, "Preview isn't available for this file type in-browser.");
+                // Same centered "page" card treatment as the .docx branch
+                // above — this used to be a bare, left-aligned, full-width
+                // block, visibly inconsistent with how a .docx renders.
+                body.innerHTML = `<pre class="bg-white mx-auto my-4 p-8 rounded-lg shadow-card text-sm text-surface-700 whitespace-pre-wrap font-mono" style="max-width: 800px;">${__escapeHtml(text)}</pre>`;
+                if (autoPrint) __printViewer(); // content above is already synchronously in the DOM
             }
         } catch (e) {
             __showFallback(body, freshUrl, "Couldn't load the preview.");

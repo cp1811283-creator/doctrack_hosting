@@ -21,7 +21,13 @@ function pendingAssignmentAt(Carbon $slaExpiresAt, Carbon $dueDate): DocumentAss
 {
     $originator = User::factory()->originator()->create();
     $approver = User::factory()->approver('Job Order')->create();
-    $stage = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Technical Review', 'sequence_order' => 1]);
+    // firstOrCreate, not create — this helper can be (and is) called more
+    // than once within a single test to set up several assignments, and a
+    // real unique constraint on active category-wide stages (added
+    // 2026-10-03, after a genuine production duplicate-stage bug) now
+    // correctly catches what a second create() call here would be: a real
+    // duplicate "Job Order Technical Review" stage.
+    $stage = WorkflowStage::firstOrCreate(['document_category' => 'Job Order', 'stage_name' => 'Technical Review'], ['sequence_order' => 1]);
 
     $document = DocumentRepository::create([
         'originator_id' => $originator->user_id,

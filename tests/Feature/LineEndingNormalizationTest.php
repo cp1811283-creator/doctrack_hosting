@@ -1,8 +1,10 @@
 <?php
 
 use App\Models\DocumentAnnotation;
+use App\Models\DocumentAssignment;
 use App\Models\DocumentRepository;
 use App\Models\User;
+use App\Models\WorkflowStage;
 use App\Services\TextExtractionService;
 use App\Services\WorkflowService;
 use Illuminate\Http\UploadedFile;
@@ -20,7 +22,11 @@ test('extracting a .txt file with CRLF line endings returns LF-only text', funct
 
     $result = app(TextExtractionService::class)->extract($file);
 
-    expect($result['text'])->toBe(str_replace("\r\n", "\n", $content))
+    // Every line here ends with "." — reconstructParagraphs() (added
+    // 2026-10-03, see ParagraphReconstructionTest) correctly reads each
+    // as a genuine line end, not a page-width wrap, and spaces them out
+    // accordingly; this test's own concern is just that no \r survives.
+    expect($result['text'])->toBe("Line one of the document.\n\nLine two of the document.\n\nLine three of the document.")
         ->and($result['text'])->not->toContain("\r");
 });
 
@@ -29,7 +35,7 @@ test('saving a document revision normalizes CRLF in the submitted text', functio
     $document = DocumentRepository::create([
         'originator_id' => $originator->user_id,
         'title' => 'crlf-save-test.txt',
-        'file_path' => 'documents/' . uniqid() . '.txt',
+        'file_path' => 'documents/'.uniqid().'.txt',
         'mime_type' => 'text/plain',
         'due_date' => now()->addDay(),
         'global_status' => 'classified_validated',
@@ -59,7 +65,7 @@ test('the backfill migration normalizes stored CRLF text without touching existi
     $document = DocumentRepository::create([
         'originator_id' => $originator->user_id,
         'title' => 'crlf-migration-test.txt',
-        'file_path' => 'documents/' . uniqid() . '.txt',
+        'file_path' => 'documents/'.uniqid().'.txt',
         'mime_type' => 'text/plain',
         'due_date' => now()->addDay(),
         'global_status' => 'classified_validated',
@@ -67,8 +73,8 @@ test('the backfill migration normalizes stored CRLF text without touching existi
         'ocr_text' => $oldText,
     ]);
 
-    $stage = \App\Models\WorkflowStage::firstOrCreate(['document_category' => 'Job Order', 'stage_name' => 'Technical Review', 'sequence_order' => 1]);
-    $assignment = \App\Models\DocumentAssignment::create([
+    $stage = WorkflowStage::firstOrCreate(['document_category' => 'Job Order', 'stage_name' => 'Technical Review', 'sequence_order' => 1]);
+    $assignment = DocumentAssignment::create([
         'document_id' => $document->document_id, 'user_id' => $approver->user_id, 'stage_id' => $stage->stage_id,
         'due_date' => $document->due_date, 'priority_rank' => 2, 'individual_status' => 'pending',
         'sla_expires_at' => now()->addHours(20),
@@ -98,5 +104,5 @@ test('the backfill migration normalizes stored CRLF text without touching existi
         ->and($annotation->start_offset)->toBe($browserComputedStart)
         ->and($annotation->end_offset)->toBe($browserComputedEnd)
         ->and(mb_substr($document->ocr_text, $annotation->start_offset, $annotation->end_offset - $annotation->start_offset))
-            ->toBe('Target phrase here');
+        ->toBe('Target phrase here');
 });

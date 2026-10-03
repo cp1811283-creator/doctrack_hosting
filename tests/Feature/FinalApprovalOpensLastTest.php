@@ -222,7 +222,13 @@ it('routes a Final Approval-only category immediately, since there is nothing to
     ]);
     $this->workflow->routeToWorkflow($document);
 
-    expect(DocumentAssignment::where('document_id', $document->document_id)->where('individual_status', 'pending')->count())->toBe(1);
+    // 2, not 1 — this file's own beforeEach() head ($this->head) has no
+    // department set, and this stage has no department requirement either,
+    // so now that a head's Final Approval eligibility is category-agnostic
+    // (see WorkflowService::eligibleApproversForStage()'s docblock), that
+    // head is also legitimately eligible here, alongside the one created
+    // specifically for Purchase Requisition above.
+    expect(DocumentAssignment::where('document_id', $document->document_id)->where('individual_status', 'pending')->count())->toBe(2);
 });
 
 it('never opens the category\'s Final Approval for a custom-routed document', function () {

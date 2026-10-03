@@ -62,7 +62,7 @@
             @if($activeModel)
                 <dl class="space-y-1.5 text-base">
                     <div class="flex justify-between"><dt class="text-surface-500">Version</dt><dd class="font-medium">{{ $activeModel->version }}</dd></div>
-                    <div class="flex justify-between"><dt class="text-surface-500">Samples</dt><dd class="font-medium">{{ $activeModel->training_sample_count }}</dd></div>
+                    <div class="flex justify-between"><dt class="text-surface-500">Documents Trained On</dt><dd class="font-medium">{{ $activeModel->training_sample_count }}</dd></div>
                     <div class="flex justify-between"><dt class="text-surface-500">Accuracy</dt><dd class="font-medium text-approved-700">{{ $activeModel->accuracy_score }}%</dd></div>
                 </dl>
             @else

@@ -39,15 +39,21 @@
                  Review page (see AdminController::slaQueueData()'s
                  `highlight` param), scrolled into view and briefly ringed
                  there. Falls back to a plain non-link block when the
-                 document itself no longer exists. --}}
-            @if($item->document)
+                 document itself no longer exists, OR once resolved — a
+                 resolved document has already left the Auto-Approval
+                 Review page's own list (it only ever shows documents still
+                 awaiting review), so `highlight` would silently match
+                 nothing and just dump the admin on an unrelated page 1
+                 with no explanation (confirmed 2026-10-03: this is exactly
+                 what used to happen). --}}
+            @if($item->document && $item->isOpen)
                 <a href="{{ route('admin.sla.queue', ['highlight' => $item->document->document_id]) }}"
                     class="block px-6 py-3 hover:bg-surface-50/60 transition-colors">
             @else
                 <div class="px-6 py-3">
             @endif
                 <div class="flex items-center justify-between gap-3">
-                    <p class="text-sm font-medium {{ $item->document ? 'text-primary-700' : 'text-surface-800' }} truncate">{{ $item->document->title ?? '—' }}</p>
+                    <p class="text-sm font-medium {{ $item->document && $item->isOpen ? 'text-primary-700' : 'text-surface-800' }} truncate">{{ $item->document->title ?? '—' }}</p>
                     <div class="shrink-0 flex items-center gap-1.5">
                         @if($isPastDue)
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rejected-100 text-rejected-800 ring-1 ring-inset ring-rejected-500/30">
@@ -78,9 +84,12 @@
                         Flagged {{ $item->firstViolatedAt->format('M j, Y g:i A') }} (<span data-live-time="{{ $item->firstViolatedAt->timestamp }}">{{ $item->firstViolatedAt->diffForHumans() }}</span>)
                     @else
                         Flagged {{ $item->firstViolatedAt->format('M j, Y g:i A') }} ({{ $item->firstViolatedAt->diffForHumans() }})
+                        @if($item->resolvedAt)
+                            &middot; Resolved {{ $item->resolvedAt->format('M j, Y g:i A') }} ({{ $item->resolvedAt->diffForHumans() }})
+                        @endif
                     @endif
                 </p>
-            @if($item->document)
+            @if($item->document && $item->isOpen)
                 </a>
             @else
                 </div>

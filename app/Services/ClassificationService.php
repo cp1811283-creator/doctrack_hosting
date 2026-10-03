@@ -8,6 +8,7 @@ use App\Models\MlModelRepository;
 use App\Models\MlStagingSample;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Phpml\Classification\SVC;
 use Phpml\FeatureExtraction\TfIdfTransformer;
@@ -217,20 +218,29 @@ class ClassificationService
     public function trainingQueueStatus(): array
     {
         $categories = ValidationService::knownCategories();
+        $confidenceCeiling = config('ml.auto_train_confidence_ceiling', 75);
 
         // whereHas('assignments') — see autoTrainIfDue()'s identical clause
         // for why: a document rejected below the random-chance confidence
         // floor never gets routed (no assignment rows), so its guessed
         // category was never trustworthy enough to display here as "queued
-        // to teach the model" either.
+        // to teach the model" either. ml_confidence + excludeNearDuplicates()
+        // mirror autoTrainIfDue()'s own eligibility query exactly (confirmed
+        // real bug, 2026-10-03: this method was missed when those two
+        // filters were added there, so the displayed queue kept showing
+        // documents — including literal duplicate re-uploads — that the
+        // real trigger had already stopped counting; this docblock's own
+        // "never out of sync" claim only holds if every filter lives here
+        // too, not just in autoTrainIfDue()).
         $eligibleByCategory = collect($categories)->mapWithKeys(fn ($category) => [
-            $category => DocumentRepository::where('ml_category', $category)
+            $category => $this->excludeNearDuplicates($category, DocumentRepository::where('ml_category', $category)
                 ->where('desired_routing', '!=', 'unrelated')
                 ->whereNotNull('ocr_text')
                 ->whereNull('used_for_training_at')
+                ->where('ml_confidence', '<', $confidenceCeiling)
                 ->whereHas('assignments')
                 ->orderBy('created_at')
-                ->get(['document_id', 'title', 'ml_category', 'created_at']),
+                ->get(['document_id', 'title', 'ml_category', 'created_at', 'ocr_text'])),
         ]);
 
         $allEligible = $eligibleByCategory->collapse()->sortBy('created_at')->values();
@@ -253,6 +263,51 @@ class ClassificationService
     }
 
     /**
+     * Excludes a candidate document whose text is a near-duplicate (config(
+     * 'ml.near_duplicate_threshold'), the same bar already proven out for
+     * AdminController::stageTrainingSamples()'s manual curated-sample
+     * warning) of either a curated sample, a real document already used in
+     * a past training round, or another candidate earlier in this same
+     * batch. A duplicate teaches the model nothing new, so it's excluded
+     * entirely — not re-offered on a later run either, since a true
+     * duplicate's status never changes.
+     *
+     * Candidates are already oldest-first (see autoTrainIfDue()'s query),
+     * so comparing each one only against what was ALREADY accepted (never
+     * against later candidates) means the oldest of any mutually-duplicate
+     * group always wins the slot — consistent with "oldest-waiting gets
+     * processed first" elsewhere in this same eligibility step.
+     *
+     * @param  Collection<int, DocumentRepository>  $candidates
+     * @return Collection<int, DocumentRepository>
+     */
+    private function excludeNearDuplicates(string $category, Collection $candidates): Collection
+    {
+        $threshold = config('ml.near_duplicate_threshold', 0.85);
+
+        $knownTexts = MlStagingSample::curatedTextsFor($category)
+            ->merge(
+                DocumentRepository::where('ml_category', $category)
+                    ->whereNotNull('used_for_training_at')
+                    ->pluck('ocr_text')
+            );
+
+        return $candidates->filter(function (DocumentRepository $candidate) use ($knownTexts, $threshold) {
+            foreach ($knownTexts as $text) {
+                if ($this->wordOverlapSimilarity((string) $candidate->ocr_text, (string) $text) >= $threshold) {
+                    return false;
+                }
+            }
+
+            // Accepted — also compared against every LATER candidate in
+            // this batch via this same growing collection.
+            $knownTexts->push($candidate->ocr_text);
+
+            return true;
+        })->values();
+    }
+
+    /**
      * The fully-automatic counterpart to train() (Feature: no manual admin
      * review/retrain) — checked every few minutes by AutoTrainClassifier
      * (config('ml.auto_train_check_interval_minutes')), but only actually
@@ -261,9 +316,14 @@ class ClassificationService
      *     documents have piled up since the last training, OR
      *   - config('ml.auto_train_max_age_hours') has passed since the last
      *     training with at least ONE new document waiting.
-     * Eligibility has no confidence/margin floor of its own (see the
-     * eligibility query below) — any routed document, however unsure the
-     * original guess was, is trusted to teach the model.
+     * Eligibility has no confidence FLOOR of its own beyond the random-
+     * chance reject floor already enforced at routing time (see the
+     * eligibility query below) — but it does have a confidence CEILING
+     * (config('ml.auto_train_confidence_ceiling')): a document the
+     * classifier is already confident about teaches the model nothing new,
+     * so only documents still genuinely uncertain (between the reject
+     * floor and this ceiling) are eligible — "uncertainty sampling," see
+     * the docblock in config/ml.php.
      *
      * Requires a model to already be active — this can't bootstrap the
      * very first model from nothing (see AdminController::trainModel(),
@@ -277,17 +337,56 @@ class ClassificationService
      * automatic retrain can therefore never make live classification
      * worse, only better or unchanged.
      *
-     * Each category's auto-added documents are also capped at
-     * config('ml.auto_train_max_auto_ratio') times that category's own
-     * human-curated MlStagingSample count, oldest-eligible-first, so the
-     * model stays anchored to trustworthy data even after a long stretch
-     * of automatic additions; anything over the cap simply stays eligible
-     * for a later run instead of being skipped forever.
+     * Each category's real-document corpus is capped at config(
+     * 'ml.auto_train_max_auto_ratio') times that category's own human-
+     * curated MlStagingSample count — but unlike before, that corpus now
+     * ACCUMULATES across every retrain (a FIFO/replay-buffer window of the
+     * most-recently-UPLOADED real documents for that category) instead of
+     * being discarded after one use. Previously, once a document was
+     * folded into one retrain, its text was gone from every FUTURE
+     * retrain's corpus even though each retrain rebuilds a brand new model
+     * from scratch — the next model genuinely knew less about real-world
+     * documents than the one it replaced. Now the oldest-uploaded real
+     * document only drops out once the window is actually full, same as
+     * the curated seed samples already do (always fully included, every
+     * time). used_for_training_at is still stamped once per document and
+     * still permanently excludes it from ever being counted again toward
+     * the BATCH TRIGGER above (so the trigger still only reacts to
+     * genuinely new activity) — it no longer means "never train on this
+     * again," only "don't count this as new again."
      *
      * @return array{kept: bool, documentsUsed: int, previousAccuracy: float, newAccuracy: float, version: string}|null
      *                                                                                                                  null when nothing was due to run at all.
      */
     public function autoTrainIfDue(): ?array
+    {
+        // Cache::lock, not a DocumentAssignment-style row lock — "should we
+        // retrain?" isn't a decision about any one row, it's an aggregate
+        // count across many documents, so there's nothing to lockForUpdate()
+        // onto. Guards against this now having TWO independent callers that
+        // can land at nearly the same moment — CheckAutoTrainDue (dispatched
+        // the instant a document routes) and the 5-minute scheduled poll
+        // (AutoTrainClassifier) — from both seeing the same eligible
+        // documents and both actually retraining. Whichever gets here first
+        // wins; the other sees the lock already held and returns null
+        // immediately rather than waiting or racing (same category of bug
+        // already caught and fixed once this session, for SlaService::
+        // autoApproveApproverMiss() — a real DB row to lock there, this is
+        // the equivalent for a decision that isn't about one row). Backed by
+        // the real shared database cache store (CACHE_STORE), same reason
+        // the scheduler's own withoutOverlapping() already works reliably —
+        // not an unreliable local file.
+        // Lock::get() returns false (not null) when the lock is already
+        // held — normalized here since the return type is ?array, not
+        // ?array|false, and "another invocation is already handling this"
+        // means exactly the same thing to every caller as "nothing was due
+        // right now."
+        $result = Cache::lock('ml-auto-train-if-due', 300)->get(fn () => $this->doAutoTrain());
+
+        return $result === false ? null : $result;
+    }
+
+    private function doAutoTrain(): ?array
     {
         $activeModel = MlModelRepository::active();
         if (! $activeModel) {
@@ -323,14 +422,31 @@ class ClassificationService
         // that one passed the confidence floor and validation and reached
         // a real assignment, so its category label is trustworthy even
         // though the underlying request was denied.
+        // auto_train_confidence_ceiling: excludes a document the classifier
+        // is already confident about — see this method's docblock and
+        // config/ml.php's "uncertainty sampling" explanation. Still has to
+        // have cleared the random-chance reject floor to have a real
+        // ml_confidence at all (a rejected document never reaches here —
+        // whereHas('assignments') below already excludes it).
+        $confidenceCeiling = config('ml.auto_train_confidence_ceiling', 75);
+
+        // Near-duplicate filtering (confirmed real scenario, 2026-10-03:
+        // the same file uploaded twice both landed in the queue, since
+        // nothing compared them to each other) — see excludeNearDuplicates()
+        // below. Applied HERE, before $totalEligible is even computed, not
+        // just at corpus-building time further down — a duplicate must not
+        // be able to inflate the batch trigger count either, or 5 copies of
+        // one file could falsely signal "5 new, meaningfully different
+        // documents arrived."
         $eligibleByCategory = collect($categories)->mapWithKeys(fn ($category) => [
-            $category => DocumentRepository::where('ml_category', $category)
+            $category => $this->excludeNearDuplicates($category, DocumentRepository::where('ml_category', $category)
                 ->where('desired_routing', '!=', 'unrelated')
                 ->whereNotNull('ocr_text')
                 ->whereNull('used_for_training_at')
+                ->where('ml_confidence', '<', $confidenceCeiling)
                 ->whereHas('assignments')
                 ->orderBy('created_at')
-                ->get(),
+                ->get()),
         ]);
 
         $totalEligible = $eligibleByCategory->sum->count();
@@ -349,15 +465,44 @@ class ClassificationService
 
         $maxAutoRatio = config('ml.auto_train_max_auto_ratio', 2.0);
         $samplesByCategory = [];
+        // Only documents that actually land a spot in this category's
+        // capped corpus below get stamped used_for_training_at and
+        // re-scored after training (see the end of this method) — a
+        // newly-eligible document crowded out of the window this round
+        // stays un-stamped, so it's still eligible to compete for a spot
+        // on a later run instead of being silently wasted.
         $usedDocuments = collect();
 
         foreach ($categories as $category) {
             $curated = MlStagingSample::curatedTextsFor($category);
             $cap = (int) floor($curated->count() * $maxAutoRatio);
-            $included = $eligibleByCategory->get($category, collect())->take($cap);
 
-            $usedDocuments = $usedDocuments->merge($included);
-            $samplesByCategory[$category] = $curated->merge($included->pluck('ocr_text'))->all();
+            $newlyEligible = $eligibleByCategory->get($category, collect());
+
+            // The actual training corpus for this category: every real
+            // document EVER folded in before (used_for_training_at not
+            // null) PLUS this round's newly-eligible batch, kept as a FIFO
+            // window of the $cap most recently UPLOADED (created_at, not
+            // used_for_training_at — every retrain re-touches that field on
+            // the whole carried-forward window, which would make it useless
+            // for telling old from new after the very first run). Anything
+            // older than the window simply ages out, same as a replay
+            // buffer — including a newly-eligible document that loses out
+            // to more-recent already-used ones: it stays un-stamped (see
+            // above), not evicted-but-marked-done.
+            $corpusDocuments = DocumentRepository::where('ml_category', $category)
+                ->where(function ($q) use ($newlyEligible) {
+                    $q->whereNotNull('used_for_training_at')
+                        ->orWhereIn('document_id', $newlyEligible->pluck('document_id'));
+                })
+                ->orderByDesc('created_at')
+                ->take($cap)
+                ->get();
+
+            $newlyUsedIds = $corpusDocuments->pluck('document_id')->intersect($newlyEligible->pluck('document_id'));
+            $usedDocuments = $usedDocuments->merge($newlyEligible->whereIn('document_id', $newlyUsedIds));
+
+            $samplesByCategory[$category] = $curated->merge($corpusDocuments->pluck('ocr_text'))->all();
         }
 
         $previousAccuracy = (float) $activeModel->accuracy_score;

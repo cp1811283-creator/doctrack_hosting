@@ -32,6 +32,10 @@ function tieringDoc(float $confidence, float $margin, string $content): array
 
     $mock = Mockery::mock(ClassificationService::class);
     $mock->shouldReceive('classify')->andReturn(['category' => 'Job Order', 'confidence' => $confidence, 'margin' => $margin, 'model_id' => null]);
+    // See the matching comment in OtherDisplayTest.php — WorkflowService::
+    // ingest() dispatches CheckAutoTrainDue, which runs inline under the
+    // test suite's sync queue connection against this same strict mock.
+    $mock->shouldReceive('autoTrainIfDue')->andReturn(null);
     app()->instance(ClassificationService::class, $mock);
 
     $document = app(WorkflowService::class)->ingest(
@@ -50,7 +54,7 @@ function tieringDoc(float $confidence, float $margin, string $content): array
 function tieringContent(): string
 {
     return "Job Order No: JO-1\nDate Requested: today\nRequested By: someone\nDescription of Work: "
-        . str_repeat('fix the widget assembly line carefully and thoroughly ', 5);
+        .str_repeat('fix the widget assembly line carefully and thoroughly ', 5);
 }
 
 test('high confidence routes automatically and adds nothing ambiguous to the record, regardless of margin', function () {

@@ -102,12 +102,7 @@
                         @endif
                     </div>
                     <p class="text-sm text-surface-500 mb-2">
-                        Submitted by {{ $doc->originator->full_name }} ·
-                        <button type="button"
-                           onclick="openDocumentViewer('{{ route('documents.file', $doc) }}', '{{ $doc->mime_type }}', '{{ addslashes($doc->original_filename ?? $doc->title) }}', {{ $doc->document_id }})"
-                           class="text-primary-700 hover:underline font-medium">
-                            View original file
-                        </button>
+                        Submitted by {{ $doc->originator->full_name }}
                         @if($activeAssignment)
                             ·
                             <button type="button"
@@ -176,17 +171,44 @@
                         // live-swapped fragment can never disagree with a full
                         // page load about whether this is currently blocking.
                         $outsideBusinessHoursBlocked = ($businessHoursEnforced ?? false) && !($isWithinBusinessHours ?? true);
+
+                        // Distinct from a genuine decision (confirmed 2026-10-03,
+                        // a real reported bug): "Your decision is recorded" is
+                        // flatly wrong when this approver's own seat was auto-
+                        // approved because they missed the deadline — they
+                        // never decided anything, the system did. Every
+                        // co-approver on the SAME stage shares this exact same
+                        // deadline (see WorkflowService::assignStage()'s
+                        // docblock), so if this seat auto-approved, every
+                        // sibling seat on that stage did too, at the same
+                        // instant — there's no "some of them might still make
+                        // it" to soften the message with, which is why this
+                        // case drops the "still waiting on other approvers"
+                        // line entirely instead of keeping it like the
+                        // genuine-decision case below does.
+                        $wasAutoApproved = $stageAssignments->contains('auto_approved', true);
                     @endphp
                     @if(!$activeAssignment)
-                        <div class="flex items-center gap-3 rounded-xl border border-approved-200 bg-approved-50/40 p-4">
-                            <span class="w-7 h-7 rounded-full bg-approved-100 text-approved-700 flex items-center justify-center flex-shrink-0">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-                            </span>
-                            <p class="text-sm text-surface-600">
-                                <span class="font-medium text-approved-700">Your decision is recorded.</span>
-                                Still waiting on other approvers before this document is finalized — see the stage list above for who's left.
-                            </p>
-                        </div>
+                        @if($wasAutoApproved)
+                            <div class="flex items-center gap-3 rounded-xl border border-processing-200 bg-processing-50/40 p-4">
+                                <span class="w-7 h-7 rounded-full bg-processing-100 text-processing-700 flex items-center justify-center flex-shrink-0">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/></svg>
+                                </span>
+                                <p class="text-sm text-surface-600">
+                                    <span class="font-medium text-processing-700">Auto-approved — you missed this deadline.</span>
+                                </p>
+                            </div>
+                        @else
+                            <div class="flex items-center gap-3 rounded-xl border border-approved-200 bg-approved-50/40 p-4">
+                                <span class="w-7 h-7 rounded-full bg-approved-100 text-approved-700 flex items-center justify-center flex-shrink-0">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                                </span>
+                                <p class="text-sm text-surface-600">
+                                    <span class="font-medium text-approved-700">Your decision is recorded.</span>
+                                    Still waiting on other approvers before this document is finalized — see the stage list above for who's left.
+                                </p>
+                            </div>
+                        @endif
                     @else
                     <div class="flex flex-col sm:flex-row sm:items-center gap-4 rounded-xl border border-primary-200 bg-primary-50/40 p-4 shadow-sm">
                         <div class="flex-1 min-w-0">
@@ -241,7 +263,7 @@
                                     class="w-full rounded-lg border-surface-300 text-sm focus:border-primary-500 focus:ring-primary-500 px-3 py-2"></textarea>
                                 @if($reviewSecondsRemaining > 0)
                                     <p class="review-countdown-label text-xs text-processing-700 font-medium">
-                                        Open "View original file" above to begin your review — {{ $reviewSecondsRemaining }}s needed before you can decide.
+                                        Open "Review &amp; Comment" above to begin your review — {{ $reviewSecondsRemaining }}s needed before you can decide.
                                     </p>
                                 @endif
                                 <div class="flex gap-2">

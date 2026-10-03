@@ -1,10 +1,13 @@
 <?php
 
+use App\Models\AuditLog;
 use App\Models\DocumentRepository;
 use App\Models\User;
 use App\Services\ClassificationService;
 use App\Services\WorkflowService;
+use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
+use Symfony\Component\Routing\Exception\RouteNotFoundException;
 
 /**
  * The classifier is mocked to a fixed category rather than relying on the
@@ -18,6 +21,10 @@ function fakeClassifiedIngest(string $category, bool $requiresPrinting = false):
 
     $mock = Mockery::mock(ClassificationService::class);
     $mock->shouldReceive('classify')->andReturn(['category' => $category, 'confidence' => 95, 'margin' => 100.0, 'model_id' => null]);
+    // See the matching comment in OtherDisplayTest.php — WorkflowService::
+    // ingest() dispatches CheckAutoTrainDue, which runs inline under the
+    // test suite's sync queue connection against this same strict mock.
+    $mock->shouldReceive('autoTrainIfDue')->andReturn(null);
     app()->instance(ClassificationService::class, $mock);
 
     return app(WorkflowService::class)->ingest(
@@ -43,7 +50,7 @@ it('leaves requires_printing false when not checked, with no category-level over
 });
 
 it('carries the flag forward on resubmission instead of resetting it', function () {
-    $this->travelTo(\Carbon\Carbon::parse('2026-08-12 10:00:00')); // Wednesday, business hours
+    $this->travelTo(Carbon::parse('2026-08-12 10:00:00')); // Wednesday, business hours
 
     $originator = User::factory()->originator()->create();
     $rejected = DocumentRepository::create([
@@ -135,7 +142,7 @@ it('opens the shared Document Tracker popup for a document row in the Archive', 
         'mime_type' => 'text/plain', 'due_date' => now()->addDay(), 'upload_date' => now(), 'global_status' => 'approved',
         'ml_category' => 'Job Order',
     ]);
-    \App\Models\AuditLog::record($originator->user_id, $doc->document_id, 'upload', 'Document uploaded.');
+    AuditLog::record($originator->user_id, $doc->document_id, 'upload', 'Document uploaded.');
 
     $response = $this->actingAs($originator)->get(route('originator.archive', ['category' => 'Job Order']));
 
@@ -151,5 +158,5 @@ it('no longer exposes a category print-default admin route', function () {
 
     expect(function () {
         route('admin.workflow.categoryPrintDefault');
-    })->toThrow(\Symfony\Component\Routing\Exception\RouteNotFoundException::class);
+    })->toThrow(RouteNotFoundException::class);
 });

@@ -19,6 +19,10 @@ function mockClassificationAsJobOrder(): void
 {
     $mock = Mockery::mock(ClassificationService::class);
     $mock->shouldReceive('classify')->andReturn(['category' => 'Job Order', 'confidence' => 90, 'margin' => 10.0, 'model_id' => null]);
+    // See the matching comment in OtherDisplayTest.php — WorkflowService::
+    // ingest() dispatches CheckAutoTrainDue, which runs inline under the
+    // test suite's sync queue connection against this same strict mock.
+    $mock->shouldReceive('autoTrainIfDue')->andReturn(null);
     app()->instance(ClassificationService::class, $mock);
 }
 

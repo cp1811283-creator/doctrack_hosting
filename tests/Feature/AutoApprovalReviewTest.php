@@ -166,7 +166,17 @@ test('disputing broadcasts DocumentStatusChanged so the originator sees it insta
     Event::assertDispatched(DocumentStatusChanged::class, fn ($event) => $event->document->document_id === $document->document_id);
 });
 
-test('confirming does NOT broadcast DocumentStatusChanged, since nothing visible to the originator changes', function () {
+test('confirming DOES broadcast DocumentStatusChanged, so an already-open page sees display_status flip to Approved without a manual reload', function () {
+    // Reversed 2026-10-03 — this test previously asserted the opposite and
+    // was itself the bug: confirming only ever touched admin_reviewed_at on
+    // the assignment rows, never global_status/disputed_at on the document
+    // itself (the only two columns DocumentRepository::booted() watches),
+    // so nothing ever told an already-open originator/admin page to
+    // re-fetch. DocumentRepository::display_status already correctly
+    // computes 'approved' the instant every auto-approved stage is
+    // reviewed — the status WAS right on a fresh page load, just invisible
+    // without one. See AdminController::reviewAutoApproval()'s confirmed
+    // branch.
     Event::fake([DocumentStatusChanged::class]);
 
     $admin = User::factory()->admin()->create();
@@ -174,5 +184,22 @@ test('confirming does NOT broadcast DocumentStatusChanged, since nothing visible
 
     $this->actingAs($admin)->post(route('admin.sla.review', $document), ['outcome' => 'confirmed']);
 
-    Event::assertNotDispatched(DocumentStatusChanged::class);
+    Event::assertDispatched(DocumentStatusChanged::class, fn ($event) => $event->document->document_id === $document->document_id);
+});
+
+test('confirming every auto-approved stage flips display_status to approved', function () {
+    $admin = User::factory()->admin()->create();
+    $document = documentWithAutoApprovedStages(1);
+    // review_due_at is what makes display_status treat a stage as still
+    // genuinely AWAITING review (see its own accessor) — the shared
+    // documentWithAutoApprovedStages() helper leaves it null, which
+    // already reads as "approved" with nothing to confirm; this test is
+    // specifically about the still-pending case.
+    DocumentAssignment::where('document_id', $document->document_id)->update(['review_due_at' => now()->addHours(6)]);
+
+    expect($document->fresh()->display_status)->toBe('auto_approved');
+
+    $this->actingAs($admin)->post(route('admin.sla.review', $document), ['outcome' => 'confirmed']);
+
+    expect($document->fresh()->display_status)->toBe('approved');
 });

@@ -13,6 +13,21 @@ class DocumentRepository extends Model
     protected $primaryKey = 'document_id';
 
     /**
+     * The one file type DocxRichContentService can actually parse and
+     * surgically edit — real OOXML .docx, not legacy binary .doc (which
+     * has no reliable dependency-free reader/writer in this app and
+     * therefore stays in the plain-extracted-text group alongside .pdf
+     * and scanned images — see that service's own docblock and
+     * TextExtractionService::extract()).
+     */
+    public const RICH_DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    public function isRichDocx(): bool
+    {
+        return $this->mime_type === self::RICH_DOCX_MIME;
+    }
+
+    /**
      * Broadcasts DocumentStatusChanged over Reverb whenever global_status
      * OR disputed_at actually changes, from wherever it changes — a single
      * hook here instead of manually firing the event at every call site

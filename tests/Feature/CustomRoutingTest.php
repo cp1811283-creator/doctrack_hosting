@@ -4,6 +4,8 @@ use App\Models\DocumentAssignment;
 use App\Models\DocumentRepository;
 use App\Models\User;
 use App\Models\WorkflowStage;
+use App\Services\ApprovalForecastService;
+use App\Services\BusinessHoursService;
 use App\Services\ClassificationService;
 use App\Services\WorkflowService;
 use Illuminate\Http\UploadedFile;
@@ -26,6 +28,10 @@ function fakeClassifiedIngestWithRoutingMode(string $category, float $confidence
 
     $mock = Mockery::mock(ClassificationService::class);
     $mock->shouldReceive('classify')->andReturn(['category' => $category, 'confidence' => $confidence, 'margin' => 100.0, 'model_id' => null]);
+    // See the matching comment in OtherDisplayTest.php — WorkflowService::
+    // ingest() dispatches CheckAutoTrainDue, which runs inline under the
+    // test suite's sync queue connection against this same strict mock.
+    $mock->shouldReceive('autoTrainIfDue')->andReturn(null);
     app()->instance(ClassificationService::class, $mock);
 
     return app(WorkflowService::class)->ingest(
@@ -42,7 +48,7 @@ test('routing_mode custom still classifies and validates normally, but waits for
     // Matches the Job Order template's required_sections + min_word_count
     // (30 words) — these tests aren't about classification/validation
     // itself, just about what happens to routing once both succeed.
-    $content = "Job Order No: JO-1\nDate Requested: today\nRequested By: someone\nDescription of Work: " .
+    $content = "Job Order No: JO-1\nDate Requested: today\nRequested By: someone\nDescription of Work: ".
         str_repeat('fix the widget assembly line carefully and thoroughly ', 5);
 
     $document = fakeClassifiedIngestWithRoutingMode('Job Order', 95, $content, 'custom');
@@ -217,13 +223,13 @@ test('the estimated approval time for a custom-routed document reflects its real
     ]);
 
     // Nothing to estimate yet — no assignment/deadline exists until routed.
-    expect(app(App\Services\ApprovalForecastService::class)->estimateFor($document))->toBeNull();
+    expect(app(ApprovalForecastService::class)->estimateFor($document))->toBeNull();
 
     app(WorkflowService::class)->routeToCustomApprovers($document, [$approver->user_id], $originator);
     $document->refresh();
 
     $assignment = DocumentAssignment::where('document_id', $document->document_id)->first();
-    $estimate = app(App\Services\ApprovalForecastService::class)->estimateFor($document);
+    $estimate = app(ApprovalForecastService::class)->estimateFor($document);
 
     expect($estimate)->not->toBeNull();
     // Business-hours-aware, not a plain wall-clock diff — the estimate
@@ -231,7 +237,7 @@ test('the estimated approval time for a custom-routed document reflects its real
     // (see workflow-stage-list.blade.php), so it has to be measured with
     // that same business-hours ruler (businessSecondsRemaining(), its
     // exact mirror image) to land back on the real SLA deadline.
-    $expectedSeconds = app(App\Services\BusinessHoursService::class)
+    $expectedSeconds = app(BusinessHoursService::class)
         ->businessSecondsRemaining(now(), $assignment->sla_expires_at);
     expect($estimate->totalSeconds)->toBeGreaterThan($expectedSeconds - 5)
         ->and($estimate->totalSeconds)->toBeLessThan($expectedSeconds + 5);

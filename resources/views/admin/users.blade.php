@@ -28,19 +28,24 @@
                          one Admin account; there is no in-app way to
                          create a second one (see AdminController::
                          storeUser()'s matching validation). --}}
+                    {{-- Plain "Originator"/"Approver" — not "Staff (...)" like
+                         before. The Level field below is what actually
+                         decides Staff vs Head for an Approver account; this
+                         option used to bake "Staff" in before that field was
+                         even reached, so picking Head afterward contradicted
+                         what Role had just said. Originators have no Level
+                         field at all, so "Staff" never meant anything there
+                         either. --}}
                     <select name="role" id="create-role" required class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
-                        <option value="originator" @selected(old('role', 'originator') === 'originator')>Staff (Originator)</option>
-                        <option value="approver" @selected(old('role') === 'approver')>Staff (Approver)</option>
+                        <option value="originator" @selected(old('role', 'originator') === 'originator')>Originator</option>
+                        <option value="approver" @selected(old('role') === 'approver')>Approver</option>
                     </select>
                 </div>
-                <div id="create-category-field">
-                    <label class="block text-xs font-medium text-surface-700 mb-1">
-                        Assigned Category
-                        <span class="text-surface-400 font-normal">(Approvers only — changeable later via "Manage Category & Stages")</span>
-                    </label>
-                    <select name="assigned_category" id="create-category" class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
-                        @foreach(\App\Services\ValidationService::knownCategories() as $c)
-                            <option value="{{ $c }}" @selected(old('assigned_category') === $c)>{{ $c }}</option>
+                <div id="create-level-field">
+                    <label class="block text-xs font-medium text-surface-700 mb-1">Level</label>
+                    <select name="level" id="create-level" class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
+                        @foreach(\App\Models\User::knownLevels() as $l)
+                            <option value="{{ $l }}" @selected(old('level') === $l)>{{ ucfirst($l) }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -57,14 +62,21 @@
                     </select>
                 </div>
 
-                <div id="create-level-field">
-                    <label class="block text-xs font-medium text-surface-700 mb-1">Level</label>
-                    <select name="level" id="create-level" class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
-                        @foreach(\App\Models\User::knownLevels() as $l)
-                            <option value="{{ $l }}" @selected(old('level') === $l)>{{ ucfirst($l) }}</option>
+                <div id="create-category-field">
+                    <label class="block text-xs font-medium text-surface-700 mb-1">
+                        Assigned Category
+                        <span class="text-surface-400 font-normal">(Approvers only — changeable later via "Manage Category & Stages")</span>
+                    </label>
+                    <select name="assigned_category" id="create-category" class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
+                        @foreach(\App\Services\ValidationService::knownCategories() as $c)
+                            <option value="{{ $c }}" @selected(old('assigned_category') === $c)>{{ $c }}</option>
                         @endforeach
                     </select>
                 </div>
+
+                <p id="create-head-note" class="hidden text-xs text-surface-500 -mt-1">
+                    Heads sit on Final Approval across <strong>every</strong> category for their department — no category or stage selection needed.
+                </p>
 
                 {{-- Stage picker: one checkbox-group per category, JS shows only the group matching the selected
                      category, and within it, only the stages the selected department actually owns (a stage with
@@ -76,6 +88,16 @@
                     @foreach($stagesByCategory as $category => $categoryStages)
                         <div class="stage-group space-y-1 {{ !$loop->first ? 'hidden' : '' }}" data-category="{{ $category }}">
                             @forelse($categoryStages as $stage)
+                                {{-- This picker only ever renders for a Staff-level
+                                     account (Head hides the whole field — see
+                                     toggleApproverFields() below) — Final Approval
+                                     is head-only (WorkflowService::
+                                     eligibleApproversForStage()), so a Staff
+                                     account can never actually hold it regardless
+                                     of what's checked here. Omitted, not just
+                                     disabled, so there's nothing misleading to
+                                     check in the first place. --}}
+                                @continue($stage->stage_name === 'Final Approval')
                                 <label class="stage-option flex items-center gap-2 text-xs text-surface-600" data-departments="{{ implode(',', $stage->departmentNames()) }}">
                                     <input type="checkbox" name="stage_ids[]" value="{{ $stage->stage_id }}" @checked(in_array($stage->stage_id, old('stage_ids', []))) class="rounded border-surface-300 text-primary-700 focus:ring-primary-500">
                                     {{ $stage->sequence_order }}. {{ $stage->stage_name }}
@@ -168,14 +190,26 @@
     const stagesField = document.getElementById('create-stages-field');
     const categorySelect = document.getElementById('create-category');
     const departmentSelect = document.getElementById('create-department');
+    const levelSelect = document.getElementById('create-level');
     const stageGroups = stagesField.querySelectorAll('.stage-group');
 
+    // Category and Specific Stages don't apply to a head approver — see
+    // WorkflowService::eligibleApproversForStage()'s docblock: a head sits
+    // on Final Approval across every category, matched by department
+    // alone, so showing either field would just invite picking something
+    // the system now ignores entirely (the backend nulls both out for a
+    // head regardless of what's submitted — see AdminController::
+    // storeUser()). Department and Level still apply.
+    const headNote = document.getElementById('create-head-note');
+
     const toggleApproverFields = () => {
-        const show = roleSelect.value === 'approver';
-        categoryField.style.display = show ? 'block' : 'none';
-        departmentField.style.display = show ? 'block' : 'none';
-        levelField.style.display = show ? 'block' : 'none';
-        stagesField.style.display = show ? 'block' : 'none';
+        const isApprover = roleSelect.value === 'approver';
+        const isHead = isApprover && levelSelect.value === 'head';
+        categoryField.style.display = isApprover && !isHead ? 'block' : 'none';
+        departmentField.style.display = isApprover ? 'block' : 'none';
+        levelField.style.display = isApprover ? 'block' : 'none';
+        stagesField.style.display = isApprover && !isHead ? 'block' : 'none';
+        headNote.classList.toggle('hidden', !isHead);
     };
 
     // Shows only the stage-group matching the selected category, and within
@@ -201,6 +235,7 @@
     };
 
     roleSelect.addEventListener('change', toggleApproverFields);
+    levelSelect.addEventListener('change', toggleApproverFields);
     categorySelect.addEventListener('change', showStagesForCategoryAndDepartment);
     departmentSelect.addEventListener('change', showStagesForCategoryAndDepartment);
     toggleApproverFields();

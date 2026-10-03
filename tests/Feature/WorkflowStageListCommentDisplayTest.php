@@ -14,6 +14,34 @@ use App\Models\WorkflowStage;
  * labeled "Rejected Due To:" for a rejection specifically (the common
  * case, and the one this whole fix was about), "Comments:" otherwise.
  */
+it('never shows an archived stage, even though it is still the same category and pipeline position', function () {
+    // Regression coverage for a real reported bug (confirmed 2026-10-03):
+    // neither WorkflowStage::configured() nor forCategory() filter
+    // is_archived, so this component kept rendering an archived stage
+    // forever on every document of that category — this was the ONE
+    // query in the whole app that had been missed when every other
+    // stage-aware query already excluded archived rows (WorkflowService::
+    // routeToWorkflow(), openFinalApprovalIfReady(), etc.). Confirmed via
+    // a real production duplicate-stage incident: archiving the duplicate
+    // stage rows didn't actually stop them from showing here.
+    $originator = User::factory()->originator()->create();
+    WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Technical Review', 'sequence_order' => 1]);
+    $archivedDuplicate = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Budget Check', 'sequence_order' => 2, 'is_archived' => true]);
+    WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Final Approval', 'sequence_order' => 3]);
+
+    $document = DocumentRepository::create([
+        'originator_id' => $originator->user_id, 'title' => 'archived-stage-test.txt', 'file_path' => 'documents/ast.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(), 'global_status' => 'classified_validated', 'ml_category' => 'Job Order',
+    ]);
+
+    $response = $this->actingAs($originator)->get(route('originator.documents.show', $document));
+
+    $response->assertOk()
+        ->assertSee('Technical Review')
+        ->assertSee('Final Approval')
+        ->assertDontSee($archivedDuplicate->stage_name);
+});
+
 it('labels a rejection reason "Rejected Due To:" on the originator tracking page', function () {
     $originator = User::factory()->originator()->create();
     $approver = User::factory()->approver('Job Order')->create();

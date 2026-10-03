@@ -298,39 +298,102 @@
                 <p class="text-sm text-surface-500 mb-4">{{ $document->openAnnotations->count() }} open — flagged by a reviewer, not yet addressed.</p>
 
                 @can('editText', $document)
-                    <form method="POST" action="{{ route('originator.documents.saveRevision', $document) }}" class="space-y-4">
-                        @csrf
-                        <ul class="space-y-3">
-                            @foreach($document->openAnnotations as $annotation)
-                                <li class="rounded-lg border border-surface-200 p-3">
-                                    <label class="flex items-start gap-2 cursor-pointer">
-                                        {{-- data-start/data-end (Feature: jump straight to the
-                                             flagged spot in the text below instead of leaving the
-                                             originator to hunt for it — see the delegated 'change'
-                                             listener in tracking.blade.php). Same character
-                                             positions stored against ocr_text when this was raised
-                                             — see DocumentAnnotation's docblock for the one caveat:
-                                             they can drift if an EARLIER partial save already
-                                             changed the surrounding text length while this
-                                             particular flag stayed unresolved. --}}
-                                        <input type="checkbox" name="resolved_annotation_ids[]" value="{{ $annotation->annotation_id }}"
-                                            data-start="{{ $annotation->start_offset }}" data-end="{{ $annotation->end_offset }}"
-                                            class="mt-1 rounded border-surface-300">
-                                        <span class="min-w-0">
-                                            <span class="block text-sm text-surface-800 italic">&ldquo;{{ $annotation->selected_text }}&rdquo;</span>
-                                            <span class="block text-sm text-surface-500 mt-1">{{ $annotation->raisedBy->full_name }}: {{ $annotation->comment }}</span>
-                                        </span>
-                                    </label>
-                                </li>
-                            @endforeach
-                        </ul>
-                        <p class="text-xs text-surface-400">Check off whichever flags this edit addresses — only those reviewers are notified to re-review. Checking one selects the exact flagged passage below so it's not confused with similar-looking text elsewhere in the document.</p>
-                        <div>
-                            <label class="block text-sm font-medium text-surface-700 mb-1">Document text</label>
-                            <textarea id="revision-text-editor" name="text" rows="10" required class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 font-mono">{{ $document->ocr_text }}</textarea>
-                        </div>
-                        <button type="submit" class="bg-primary-700 hover:bg-primary-800 text-white text-sm font-semibold px-4 py-2.5 rounded-lg">Save Revision</button>
-                    </form>
+                    @if($document->isRichDocx())
+                        {{-- Same shape as every other file type's revision
+                             screen below (checklist of open flags, then one
+                             editable area) — the only real difference is
+                             what's editable: the actual rendered document
+                             (images/tables/formatting shown exactly as
+                             uploaded) instead of a plain textarea, and only
+                             TEXT can change there — see WorkflowService::
+                             saveDocxRevision() / DocxRichContentService::
+                             applyTextEdits(), which rejects the whole save
+                             rather than risk corrupting the file if
+                             anything besides text was touched (an image or
+                             table row added/removed). The submit listener
+                             that reads #docx-revision-editor's current text
+                             back out lives in tracking.blade.php, not here
+                             — a <script> tag in a fragment this page swaps
+                             via innerHTML on every live update never runs. --}}
+                        <form method="POST" action="{{ route('originator.documents.saveRevision', $document) }}" id="docx-revision-form" class="space-y-4">
+                            @csrf
+                            <ul class="space-y-3">
+                                @foreach($document->openAnnotations as $annotation)
+                                    <li class="rounded-lg border border-surface-200 p-3">
+                                        <label class="flex items-start gap-2 cursor-pointer">
+                                            {{-- data-start/data-end (Feature: jump straight to the
+                                                 flagged spot below — see the delegated 'change'
+                                                 listener in tracking.blade.php, which locates the
+                                                 matching text inside #docx-revision-editor the same
+                                                 way it already does for the plain-textarea case). --}}
+                                            <input type="checkbox" name="resolved_annotation_ids[]" value="{{ $annotation->annotation_id }}"
+                                                data-start="{{ $annotation->start_offset }}" data-end="{{ $annotation->end_offset }}"
+                                                class="mt-1 rounded border-surface-300">
+                                            <span class="min-w-0">
+                                                <span class="block text-sm text-surface-800 italic">&ldquo;{{ $annotation->selected_text }}&rdquo;</span>
+                                                <span class="block text-sm text-surface-500 mt-1">{{ $annotation->raisedBy->full_name }}: {{ $annotation->comment }}</span>
+                                            </span>
+                                        </label>
+                                    </li>
+                                @endforeach
+                            </ul>
+                            <p class="text-xs text-surface-400">Check off whichever flags this edit addresses — only those reviewers are notified to re-review. Edit any text directly below, including inside a table — images, tables, and formatting themselves can't be changed here.</p>
+                            @error('segment_texts_json')
+                                <p class="text-sm text-rejected-700 font-medium">{{ $message }}</p>
+                            @enderror
+                            <div>
+                                <label class="block text-sm font-medium text-surface-700 mb-1">Document text</label>
+                                <div id="docx-revision-editor" contenteditable="true"
+                                    class="w-full rounded-lg border border-surface-300 text-sm px-3 py-2 leading-relaxed max-h-96 overflow-y-auto bg-white"
+                                    style="white-space: pre-wrap;">{!! app(\App\Services\DocxRichContentService::class)->render(
+                                        \Illuminate\Support\Facades\Storage::path($document->file_path), [], true
+                                    )['html'] !!}</div>
+                            </div>
+                            {{-- Starts disabled — see the delegated listener in
+                                 tracking.blade.php, which re-enables it only
+                                 once a segment's text actually differs from
+                                 what it started as, or a flag is checked. --}}
+                            <button type="submit" id="docx-revision-submit" disabled class="bg-primary-700 hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2.5 rounded-lg">Save Revision</button>
+                        </form>
+                    @else
+                        <form method="POST" action="{{ route('originator.documents.saveRevision', $document) }}" class="space-y-4">
+                            @csrf
+                            <ul class="space-y-3">
+                                @foreach($document->openAnnotations as $annotation)
+                                    <li class="rounded-lg border border-surface-200 p-3">
+                                        <label class="flex items-start gap-2 cursor-pointer">
+                                            {{-- data-start/data-end (Feature: jump straight to the
+                                                 flagged spot in the text below instead of leaving the
+                                                 originator to hunt for it — see the delegated 'change'
+                                                 listener in tracking.blade.php). Same character
+                                                 positions stored against ocr_text when this was raised
+                                                 — see DocumentAnnotation's docblock for the one caveat:
+                                                 they can drift if an EARLIER partial save already
+                                                 changed the surrounding text length while this
+                                                 particular flag stayed unresolved. --}}
+                                            <input type="checkbox" name="resolved_annotation_ids[]" value="{{ $annotation->annotation_id }}"
+                                                data-start="{{ $annotation->start_offset }}" data-end="{{ $annotation->end_offset }}"
+                                                class="mt-1 rounded border-surface-300">
+                                            <span class="min-w-0">
+                                                <span class="block text-sm text-surface-800 italic">&ldquo;{{ $annotation->selected_text }}&rdquo;</span>
+                                                <span class="block text-sm text-surface-500 mt-1">{{ $annotation->raisedBy->full_name }}: {{ $annotation->comment }}</span>
+                                            </span>
+                                        </label>
+                                    </li>
+                                @endforeach
+                            </ul>
+                            <p class="text-xs text-surface-400">Check off whichever flags this edit addresses — only those reviewers are notified to re-review. Checking one selects the exact flagged passage below so it's not confused with similar-looking text elsewhere in the document.</p>
+                            <div>
+                                <label class="block text-sm font-medium text-surface-700 mb-1">Document text</label>
+                                <textarea id="revision-text-editor" name="text" rows="10" required class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 font-mono">{{ $document->ocr_text }}</textarea>
+                            </div>
+                            {{-- Starts disabled — see the delegated listener in
+                                 tracking.blade.php, which re-enables it only
+                                 once the text actually differs from what it
+                                 started as, or a flag is checked. --}}
+                            <button type="submit" id="revision-text-submit" disabled class="bg-primary-700 hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-2.5 rounded-lg">Save Revision</button>
+                        </form>
+                    @endif
                 @else
                     <ul class="space-y-3">
                         @foreach($document->openAnnotations as $annotation)

@@ -40,10 +40,19 @@ class TextExtractionService
         $usedOcr = false;
         $failureReason = null;
 
+        // .docx is the one source whose line breaks come straight from
+        // the file's own real paragraph markers (<w:p>), not from where
+        // text happened to wrap on a printed page — see
+        // reconstructParagraphs()'s own docblock for why that matters:
+        // it's excluded below precisely because it has no "was this
+        // really a new paragraph?" ambiguity left to resolve.
+        $isStructuralText = false;
+
         if ($mime === 'application/pdf' || $extension === 'pdf') {
             $text = $this->extractFromPdf($file->getRealPath());
         } elseif ($extension === 'docx') {
             $text = $this->extractFromDocx($file->getRealPath());
+            $isStructuralText = true;
         } elseif (str_starts_with($mime, 'text/') || $extension === 'txt') {
             $text = file_get_contents($file->getRealPath());
         }
@@ -55,13 +64,22 @@ class TextExtractionService
             $ocr = $this->extractWithOcr($file->getRealPath());
             $text = $ocr['text'];
             $usedOcr = true;
+            // OCR output is per-visual-line text like PDF/plain text, not
+            // XML-structural text — even for a .docx that was too sparse
+            // in real text to skip OCR in the first place.
+            $isStructuralText = false;
             if (mb_strlen(trim($text)) < self::MIN_USABLE_CHARS) {
                 $failureReason = $ocr['failure_reason'];
             }
         }
 
+        $text = self::normalizeLineEndings(trim($text));
+        if (! $isStructuralText) {
+            $text = self::reconstructParagraphs($text);
+        }
+
         return [
-            'text' => self::normalizeLineEndings(trim($text)),
+            'text' => $text,
             'used_ocr_fallback' => $usedOcr,
             // Specific, user-facing-safe reason extraction produced no
             // usable text — null when extraction actually succeeded.
@@ -69,6 +87,62 @@ class TextExtractionService
             // 'ocr_error', or null (generic/unknown).
             'failure_reason' => $failureReason,
         ];
+    }
+
+    /**
+     * Turns per-visual-line extracted text into properly paragraph-spaced
+     * text: a blank line between genuinely different fields/paragraphs, a
+     * plain single line break kept everywhere else. Confirmed by direct
+     * investigation: PDF text extraction (smalot/pdfparser) and OCR
+     * (Tesseract) both only ever produce a SINGLE newline per visual
+     * line, with no concept of "this line ended because the paragraph
+     * did" vs "this line just reached the edge of the page" — PDF never
+     * inserts a blank line at all, and OCR's own paragraph-gap detection
+     * turned out to be inconsistent (confirmed missing a blank line
+     * between two fields on a real uploaded document). This reconstructs
+     * that distinction uniformly after the fact, using a line's length
+     * relative to the document's own longest line (meaningfully shorter
+     * reliably means a real line/field actually ended there, not that the
+     * page ran out of room) plus whether it already ends in terminal
+     * punctuation.
+     *
+     * NOT applied to .docx's real paragraph markers (see extract()) — and
+     * intentionally a heuristic, not a layout measurement: there's no
+     * access to the original PDF/image's real text coordinates through
+     * either library's public API, so this is the closest approximation
+     * available without depending on either library's internals.
+     *
+     * Public — reused by documents:reformat-extracted-paragraphs (see
+     * that command) to bring already-uploaded, already-extracted
+     * documents in line without needing to re-run PDF parsing or OCR a
+     * second time.
+     */
+    public static function reconstructParagraphs(string $text): string
+    {
+        $lines = array_values(array_filter(
+            array_map('trim', explode("\n", $text)),
+            fn (string $line) => $line !== ''
+        ));
+
+        if ($lines === []) {
+            return '';
+        }
+
+        $maxLength = max(array_map('mb_strlen', $lines));
+        $count = count($lines);
+        $result = '';
+
+        foreach ($lines as $index => $line) {
+            $result .= $line;
+            if ($index === $count - 1) {
+                break;
+            }
+
+            $looksWrapped = mb_strlen($line) >= $maxLength * 0.85 && ! preg_match('/[.!?:;]$/', $line);
+            $result .= $looksWrapped ? "\n" : "\n\n";
+        }
+
+        return $result;
     }
 
     /**
@@ -101,14 +175,16 @@ class TextExtractionService
     private function extractFromPdf(string $path): string
     {
         try {
-            if (!class_exists(PdfParser::class)) {
+            if (! class_exists(PdfParser::class)) {
                 return ''; // package not installed in this environment; triggers OCR fallback
             }
-            $parser = new PdfParser();
+            $parser = new PdfParser;
             $pdf = $parser->parseFile($path);
+
             return $pdf->getText();
         } catch (\Throwable $e) {
             report($e);
+
             return '';
         }
     }
@@ -127,11 +203,11 @@ class TextExtractionService
     public function extractFromDocx(string $path): string
     {
         try {
-            if (!class_exists(\ZipArchive::class)) {
+            if (! class_exists(\ZipArchive::class)) {
                 return ''; // php-zip extension not enabled; triggers OCR fallback
             }
 
-            $zip = new \ZipArchive();
+            $zip = new \ZipArchive;
             if ($zip->open($path) !== true) {
                 return '';
             }
@@ -157,6 +233,7 @@ class TextExtractionService
             return html_entity_decode($text, ENT_QUOTES | ENT_XML1);
         } catch (\Throwable $e) {
             report($e);
+
             return '';
         }
     }
@@ -166,13 +243,14 @@ class TextExtractionService
      */
     private function extractWithOcr(string $path): array
     {
-        if (!class_exists(TesseractOCR::class)) {
+        if (! class_exists(TesseractOCR::class)) {
             return ['text' => '', 'failure_reason' => 'ocr_package_missing'];
         }
 
         try {
             $ocr = new TesseractOCR($path);
             $this->useBundledTesseractIfPresent($ocr);
+
             return ['text' => $ocr->run(), 'failure_reason' => null];
         } catch (TesseractNotFoundException $e) {
             // The PHP wrapper is installed, but the system `tesseract-ocr`
@@ -180,9 +258,11 @@ class TextExtractionService
             // was ever installed" so the failure message can tell an admin
             // exactly what's missing rather than a generic hedge.
             report($e);
+
             return ['text' => '', 'failure_reason' => 'ocr_binary_missing'];
         } catch (\Throwable $e) {
             report($e);
+
             return ['text' => '', 'failure_reason' => 'ocr_error'];
         }
     }
@@ -216,14 +296,14 @@ class TextExtractionService
         }
 
         $binDir = storage_path('tesseract-bin');
-        $executable = $binDir . '/bin/tesseract';
+        $executable = $binDir.'/bin/tesseract';
 
-        if (!is_file($executable)) {
+        if (! is_file($executable)) {
             return;
         }
 
-        putenv('LD_LIBRARY_PATH=' . $binDir . '/lib');
-        putenv('TESSDATA_PREFIX=' . $binDir . '/share/5/tessdata');
+        putenv('LD_LIBRARY_PATH='.$binDir.'/lib');
+        putenv('TESSDATA_PREFIX='.$binDir.'/share/5/tessdata');
         $ocr->executable($executable);
     }
 

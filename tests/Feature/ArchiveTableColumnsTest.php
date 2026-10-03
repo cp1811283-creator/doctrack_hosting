@@ -5,6 +5,7 @@ use App\Models\DocumentRepository;
 use App\Models\User;
 use App\Models\WorkflowStage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * upload_date isn't in DocumentRepository::$fillable (populated by the
@@ -89,6 +90,44 @@ it('falls back to updated_at for the Approved column on a legacy import with no 
     $response->assertSee('Aug 4, 2026, 11:00 AM');
 });
 
+it('shows an Auto-Approved badge for a document nobody actually decided, and none for a genuinely human-approved one', function () {
+    // Regression coverage for a real reported bug (confirmed 2026-10-03):
+    // Archive had an "Imported" badge and a "Disputed" badge, but nothing
+    // distinguishing an auto-approved document from a normally human-
+    // approved one — once something lands in Archive there was no way to
+    // tell its provenance at a glance. Checks global_status directly (not
+    // display_status, which upgrades the DISPLAYED label to "Approved"
+    // once reviewed but never touches the underlying column) — this badge
+    // is about whether a human ever actually decided it, which review
+    // status doesn't change.
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+
+    $autoApproved = DocumentRepository::create([
+        'originator_id' => $originator->user_id, 'title' => 'auto-approved-archive-test.txt', 'file_path' => 'documents/aa.txt',
+        'mime_type' => 'text/plain', 'upload_date' => now(), 'due_date' => now()->addDay(),
+        'global_status' => 'auto_approved', 'ml_category' => 'Job Order',
+    ]);
+    $humanApproved = DocumentRepository::create([
+        'originator_id' => $originator->user_id, 'title' => 'human-approved-archive-test.txt', 'file_path' => 'documents/ha.txt',
+        'mime_type' => 'text/plain', 'upload_date' => now(), 'due_date' => now()->addDay(),
+        'global_status' => 'approved', 'ml_category' => 'Job Order',
+    ]);
+
+    $response = $this->actingAs($admin)->get(route('admin.archive', ['category' => 'Job Order']));
+    $response->assertOk();
+    $html = $response->getContent();
+
+    // Checked independently of row order (not relative to each other) —
+    // both documents share an identical upload_date, so which row the
+    // query happens to list first isn't something this test should rely on.
+    $autoRow = Str::before(Str::after($html, 'auto-approved-archive-test.txt'), '</tr>');
+    $humanRow = Str::before(Str::after($html, 'human-approved-archive-test.txt'), '</tr>');
+
+    expect($autoRow)->toContain('Auto-Approved')
+        ->and($humanRow)->not->toContain('Auto-Approved');
+});
+
 it('shows a View button for every archived document regardless of print-required or role, opening the viewer without autoPrint', function () {
     $originator = User::factory()->originator()->create();
     $document = DocumentRepository::create([
@@ -101,5 +140,5 @@ it('shows a View button for every archived document regardless of print-required
 
     $response->assertOk();
     $response->assertSee('View');
-    $response->assertSee("openDocumentViewer('" . route('documents.file', $document) . "', 'text/plain', 'view-btn-test.txt', {$document->document_id}, false)", false);
+    $response->assertSee("openDocumentViewer('".route('documents.file', $document)."', 'text/plain', 'view-btn-test.txt', {$document->document_id}, false)", false);
 });

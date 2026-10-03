@@ -157,7 +157,7 @@ it('renders the Approve/Reject buttons disabled with a countdown label when revi
 
     $response->assertOk();
     $response->assertSee('data-review-remaining="10"', false);
-    $response->assertSee('Open "View original file"', false);
+    $response->assertSee('Open "Review &amp; Comment"', false);
     $response->assertSee('name="decision" value="approved"', false);
     // The disabled attribute is on the same button as the assertion
     // above — check it's present at all somewhere in the decide form

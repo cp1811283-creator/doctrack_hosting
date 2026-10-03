@@ -29,40 +29,52 @@
     here works fine though — inline onclick="" attributes DO run on
     innerHTML-injected markup, only <script> tags don't.
 --}}
-<style>
-    @media print {
-        body * { visibility: hidden; }
-        #annotation-text, #annotation-text * { visibility: visible; }
-        #annotation-text { position: absolute; top: 0; left: 0; width: 100%; }
-    }
-</style>
+
 @php
-    // Built as a plain PHP string, not a Blade @foreach/@if loop in the
-    // template body — the text content here has to be byte-for-byte
-    // identical to $text (every offset the "select a passage" JS
-    // computes has to line up with the offsets stored server-side
-    // against $text), and Blade's own directive syntax turned out to be
-    // too fragile for that: a more "readable" multi-line loop leaks its
-    // own indentation/newlines into the output, and even a compact
-    // single-line version silently fails to compile at all in one spot
-    // (@endif immediately followed by @endforeach doesn't parse — this
-    // shipped broken once already before either problem was found).
-    // Plain string concatenation has neither failure mode.
-    $text = $document->ocr_text ?? '';
-    $cursor = 0;
-    $annotationTextHtml = '';
-    foreach ($annotations as $annotation) {
-        if ($annotation->start_offset > $cursor) {
-            $annotationTextHtml .= e(mb_substr($text, $cursor, $annotation->start_offset - $cursor));
+    // A real .docx renders through DocxRichContentService instead —
+    // images, tables, and bold/italic labels, exactly as uploaded, with
+    // the SAME start_offset/end_offset numbering (see that service's own
+    // docblock on why that invariant is what lets every byte of this
+    // feature — the "select a passage" JS, DocumentAnnotation, Request
+    // Revision, Revision History — carry over unchanged instead of
+    // needing a second, parallel highlighting scheme.
+    if ($document->isRichDocx()) {
+        $richAnnotations = $annotations->map(fn ($annotation) => [
+            'start_offset' => $annotation->start_offset,
+            'end_offset' => $annotation->end_offset,
+            'tooltip' => e($annotation->raisedBy->full_name . ': ' . $annotation->comment),
+        ])->all();
+
+        $annotationTextHtml = app(\App\Services\DocxRichContentService::class)
+            ->render(\Illuminate\Support\Facades\Storage::path($document->file_path), $richAnnotations)['html'];
+    } else {
+        // Built as a plain PHP string, not a Blade @foreach/@if loop in the
+        // template body — the text content here has to be byte-for-byte
+        // identical to $text (every offset the "select a passage" JS
+        // computes has to line up with the offsets stored server-side
+        // against $text), and Blade's own directive syntax turned out to be
+        // too fragile for that: a more "readable" multi-line loop leaks its
+        // own indentation/newlines into the output, and even a compact
+        // single-line version silently fails to compile at all in one spot
+        // (@endif immediately followed by @endforeach doesn't parse — this
+        // shipped broken once already before either problem was found).
+        // Plain string concatenation has neither failure mode.
+        $text = $document->ocr_text ?? '';
+        $cursor = 0;
+        $annotationTextHtml = '';
+        foreach ($annotations as $annotation) {
+            if ($annotation->start_offset > $cursor) {
+                $annotationTextHtml .= e(mb_substr($text, $cursor, $annotation->start_offset - $cursor));
+            }
+            $start = max($cursor, $annotation->start_offset);
+            $highlighted = mb_substr($text, $start, $annotation->end_offset - $start);
+            $tooltip = e($annotation->raisedBy->full_name . ': ' . $annotation->comment);
+            $annotationTextHtml .= '<mark class="bg-processing-100 text-processing-900 rounded px-0.5 cursor-help" title="' . $tooltip . '">' . e($highlighted) . '</mark>';
+            $cursor = max($cursor, $annotation->end_offset);
         }
-        $start = max($cursor, $annotation->start_offset);
-        $highlighted = mb_substr($text, $start, $annotation->end_offset - $start);
-        $tooltip = e($annotation->raisedBy->full_name . ': ' . $annotation->comment);
-        $annotationTextHtml .= '<mark class="bg-processing-100 text-processing-900 rounded px-0.5 cursor-help" title="' . $tooltip . '">' . e($highlighted) . '</mark>';
-        $cursor = max($cursor, $annotation->end_offset);
-    }
-    if ($cursor < mb_strlen($text)) {
-        $annotationTextHtml .= e(mb_substr($text, $cursor));
+        if ($cursor < mb_strlen($text)) {
+            $annotationTextHtml .= e(mb_substr($text, $cursor));
+        }
     }
 @endphp
 <div class="flex flex-col h-full"
@@ -100,7 +112,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
             </button>
-            <button type="button" onclick="window.print()" class="text-surface-400 hover:text-surface-700" aria-label="Print document" title="Print">
+            <button type="button" onclick="__printClone(document.getElementById('annotation-text'))" class="text-surface-400 hover:text-surface-700" aria-label="Print document" title="Print">
                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.318 2.647a.75.75 0 01-.74.853H6.762a.75.75 0 01-.74-.853L6.34 18m11.32 0H6.34m10.94-9.75V4.243a.75.75 0 00-.75-.75H7.47a.75.75 0 00-.75.75V8.25m10.94 0H6.72"/>
                 </svg>
@@ -137,7 +149,7 @@
         </div>
     @endif
 
-    <div id="annotation-text" data-document-id="{{ $document->document_id }}" class="flex-1 overflow-y-auto px-6 py-4 text-sm text-surface-800 leading-relaxed" style="white-space: pre-wrap;">{!! $annotationTextHtml !!}</div>
+    <div id="annotation-text" data-document-id="{{ $document->document_id }}" class="flex-1 overflow-y-auto px-6 py-4 text-base text-surface-800 leading-relaxed" style="white-space: pre-wrap;">{!! $annotationTextHtml !!}</div>
 
     <div id="annotation-form-area" class="hidden border-t border-surface-200 bg-surface-50/60 px-6 py-4">
         <p class="text-sm text-surface-500 mb-2">Flagging: <span id="annotation-selected-preview" class="italic text-surface-700"></span></p>

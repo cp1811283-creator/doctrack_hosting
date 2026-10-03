@@ -9,6 +9,7 @@ use App\Models\SubmissionBatch;
 use App\Models\User;
 use App\Models\WorkflowStage;
 use App\Rules\ReliableMimeType;
+use App\Services\DocxRichContentService;
 use App\Services\TextDiffService;
 use App\Services\ValidationService;
 use App\Services\WorkflowService;
@@ -611,6 +612,42 @@ class DocumentController extends Controller
     {
         $this->authorize('editText', $document);
 
+        // A real .docx is still edited "anywhere, text only" — same shape
+        // as the plain-textarea path below (edit the text, check off
+        // which flags this addresses) — but the editable surface is the
+        // real rendered document instead of a plain textarea, and the
+        // save is surgical (see WorkflowService::saveDocxRevision() /
+        // DocxRichContentService::applyTextEdits()) so images, tables,
+        // and formatting are never touched, only text content. See
+        // originator/partials/tracking-content.blade.php for the matching
+        // view.
+        if ($document->isRichDocx()) {
+            $validated = $request->validate([
+                // One JSON-encoded field, not segment_texts[] — see
+                // tracking.blade.php's submit listener for why: the
+                // default TrimStrings middleware would otherwise trim
+                // each segment's own meaningful leading/trailing space.
+                'segment_texts_json' => ['required', 'string'],
+                'resolved_annotation_ids' => ['nullable', 'array'],
+                'resolved_annotation_ids.*' => ['integer'],
+            ]);
+
+            $segmentTexts = json_decode($validated['segment_texts_json'], true);
+            if (! is_array($segmentTexts) || array_is_list($segmentTexts) === false) {
+                return back()->withErrors(['segment_texts_json' => 'Could not read the edited document — please try again.']);
+            }
+
+            try {
+                $this->workflow->saveDocxRevision(
+                    $document, $request->user(), $segmentTexts, $validated['resolved_annotation_ids'] ?? []
+                );
+            } catch (\RuntimeException $e) {
+                return back()->withErrors(['segment_texts_json' => $e->getMessage()]);
+            }
+
+            return back()->with('status', 'Revision saved.');
+        }
+
         $validated = $request->validate([
             'text' => ['required', 'string', 'max:100000'],
             'resolved_annotation_ids' => ['nullable', 'array'],
@@ -660,6 +697,34 @@ class DocumentController extends Controller
         // correctly from any configured disk driver, including an
         // S3-compatible one like Cloudflare R2.
         abort_unless(Storage::exists($document->file_path), 404, 'File not found.');
+
+        // A real .docx is kept surgically in sync with any approved
+        // revision (see WorkflowService::saveDocxRevision()) — the raw
+        // file itself genuinely IS the current document, so it's
+        // streamed as-is for mammoth.js (document-viewer-modal.blade.php)
+        // to convert. Every other type (.pdf, images, legacy .doc, even
+        // .txt) only ever had its PLAIN TEXT revised — the raw file on
+        // disk is frozen at whatever was originally uploaded, so serving
+        // it here would silently show a stale, un-revised document. See
+        // this feature's own plan: for these types, the extracted text
+        // (ocr_text) IS the document going forward.
+        if ($document->isRichDocx() && $request->query('format') === 'html') {
+            $html = app(DocxRichContentService::class)
+                ->render(Storage::path($document->file_path))['html'];
+
+            return response($html, 200, [
+                'Content-Type' => 'text/html; charset=UTF-8',
+                'Cache-Control' => 'no-store, must-revalidate',
+            ]);
+        }
+
+        if (! $document->isRichDocx()) {
+            return response($document->ocr_text ?? '', 200, [
+                'Content-Type' => 'text/plain; charset=UTF-8',
+                'Content-Disposition' => 'inline',
+                'Cache-Control' => 'no-store, must-revalidate',
+            ]);
+        }
 
         $mime = $document->mime_type ?: 'application/octet-stream';
 

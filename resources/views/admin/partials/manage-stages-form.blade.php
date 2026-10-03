@@ -37,11 +37,11 @@
         @csrf
 
         <div>
-            <label class="block text-xs font-medium text-surface-700 mb-1">Category</label>
-            <select name="assigned_category" id="edit-category" required
+            <label class="block text-xs font-medium text-surface-700 mb-1">Level</label>
+            <select name="level" id="edit-level" required
                 class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
-                @foreach(\App\Services\ValidationService::knownCategories() as $c)
-                    <option value="{{ $c }}" @selected($user->assigned_category === $c)>{{ $c }}</option>
+                @foreach(\App\Models\User::knownLevels() as $l)
+                    <option value="{{ $l }}" @selected($user->level === $l)>{{ ucfirst($l) }}</option>
                 @endforeach
             </select>
         </div>
@@ -58,23 +58,37 @@
             </select>
         </div>
 
-        <div>
-            <label class="block text-xs font-medium text-surface-700 mb-1">Level</label>
-            <select name="level" required
+        <div id="edit-category-field">
+            <label class="block text-xs font-medium text-surface-700 mb-1">Category</label>
+            <select name="assigned_category" id="edit-category" required
                 class="w-full rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
-                @foreach(\App\Models\User::knownLevels() as $l)
-                    <option value="{{ $l }}" @selected($user->level === $l)>{{ ucfirst($l) }}</option>
+                @foreach(\App\Services\ValidationService::knownCategories() as $c)
+                    <option value="{{ $c }}" @selected($user->assigned_category === $c)>{{ $c }}</option>
                 @endforeach
             </select>
         </div>
 
-        <div>
+        <p id="edit-head-note" class="hidden text-xs text-surface-500 -mt-2">
+            Heads sit on Final Approval across <strong>every</strong> category for their department — no category or stage selection needed.
+        </p>
+
+        <div id="edit-stages-field">
             <label class="block text-xs font-medium text-surface-700 mb-1">
                 Specific Stages <span class="text-surface-400 font-normal">(optional — leave all unchecked for every stage this department owns)</span>
             </label>
             @foreach($stagesByCategory as $category => $categoryStages)
                 <div class="stage-group space-y-1 {{ $category !== $user->assigned_category ? 'hidden' : '' }}" data-category="{{ $category }}">
                     @forelse($categoryStages as $stage)
+                        {{-- This picker only ever applies to a Staff-level
+                             account (Head hides the whole field — see
+                             initManageStagesForm() in kpi-drilldown-modal.
+                             blade.php) — Final Approval is head-only
+                             (WorkflowService::eligibleApproversForStage()),
+                             so a Staff account can never actually hold it
+                             regardless of what's checked here. Omitted, not
+                             just disabled, so there's nothing misleading to
+                             check in the first place. --}}
+                        @continue($stage->stage_name === 'Final Approval')
                         @php($owners = $stage->departmentNames())
                         <label class="stage-option flex items-start gap-3 p-3 rounded-lg border border-surface-200 hover:bg-surface-50 cursor-pointer"
                             data-departments="{{ implode(',', $owners) }}">

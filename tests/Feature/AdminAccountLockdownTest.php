@@ -27,7 +27,7 @@ test('the Create Account form no longer offers an Admin role option', function (
     $response = $this->actingAs($admin)->get(route('admin.users'));
 
     $response->assertOk()
-        ->assertSee('Staff (Originator)')
-        ->assertSee('Staff (Approver)')
+        ->assertSee('Originator')
+        ->assertSee('Approver')
         ->assertDontSee('<option value="admin"', false);
 });

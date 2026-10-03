@@ -9,7 +9,18 @@
      #connection-status comment for why: blur measurably lags on weaker
      graphics hardware, a flat semi-transparent tint doesn't. --}}
 <div id="kpi-drilldown-overlay" class="hidden fixed inset-0 z-50 bg-surface-900/70 flex items-center justify-center p-4" onclick="if(event.target === this) closeKpiDrilldown()">
-    <div class="bg-white rounded-xl shadow-2xl w-[90vw] max-w-7xl h-[85vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+    {{-- Base size here is the WIDE one (every drilldown except 'annotations'
+         — KPI lists, Document Tracker, Revision History's own before/after
+         comparison, etc. all genuinely need the room) — openKpiDrilldown()
+         below swaps in the narrower classes specifically for 'annotations'
+         (Review & Comment), and swaps back to this default the moment
+         'revision-history' loads into the SAME open modal (its own clock-
+         icon button re-calls openKpiDrilldown() without closing first — see
+         that function's docblock). h-[85vh] isn't replaced by a max-h here on
+         purpose: letting every OTHER drilldown's height still track this one
+         exactly as before avoids touching behavior nothing asked to change;
+         only 'annotations' gets content-sized height. --}}
+    <div id="kpi-drilldown-panel" class="bg-white rounded-xl shadow-2xl w-[90vw] max-w-7xl h-[85vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
         <div class="flex items-center justify-between px-6 py-4 border-b border-surface-200 flex-shrink-0">
             <h3 id="kpi-drilldown-title" class="text-sm font-semibold text-surface-900"></h3>
             <button type="button" onclick="closeKpiDrilldown()" class="text-surface-400 hover:text-surface-700" aria-label="Close">
@@ -49,10 +60,23 @@
         }
     }
 
+    // The two size presets openKpiDrilldown() toggles between — see the
+    // panel's own docblock comment above for why 'annotations' is the one
+    // exception. Kept as whole class STRINGS (not a single class each) so
+    // add/remove can never leave a stale class from the other preset mixed
+    // in with the new one.
+    const KPI_DRILLDOWN_SIZE_WIDE = ['w-[90vw]', 'max-w-7xl', 'h-[85vh]'];
+    const KPI_DRILLDOWN_SIZE_NARROW = ['w-full', 'max-w-2xl', 'max-h-[85vh]'];
+
     async function openKpiDrilldown(type, label, url) {
         const overlay = document.getElementById('kpi-drilldown-overlay');
+        const panel = document.getElementById('kpi-drilldown-panel');
         const title = document.getElementById('kpi-drilldown-title');
         const body = document.getElementById('kpi-drilldown-body');
+
+        const isNarrow = type === 'annotations';
+        panel.classList.remove(...KPI_DRILLDOWN_SIZE_WIDE, ...KPI_DRILLDOWN_SIZE_NARROW);
+        panel.classList.add(...(isNarrow ? KPI_DRILLDOWN_SIZE_NARROW : KPI_DRILLDOWN_SIZE_WIDE));
 
         title.textContent = label;
         overlay.classList.remove('hidden');
@@ -88,11 +112,23 @@
     function initManageStagesForm(body) {
         const categorySelect = body.querySelector('#edit-category');
         const departmentSelect = body.querySelector('#edit-department');
-        if (!categorySelect || !departmentSelect) return;
+        const levelSelect = body.querySelector('#edit-level');
+        const categoryField = body.querySelector('#edit-category-field');
+        const stagesField = body.querySelector('#edit-stages-field');
+        const headNote = body.querySelector('#edit-head-note');
+        if (!categorySelect || !departmentSelect || !levelSelect) return;
 
         const stageGroups = body.querySelectorAll('.stage-group');
 
         const refresh = () => {
+            const isHead = levelSelect.value === 'head';
+            // Category and Specific Stages don't apply to a head — see
+            // WorkflowService::eligibleApproversForStage()'s docblock, same
+            // reasoning as the Create Account form's toggleApproverFields().
+            categoryField.style.display = isHead ? 'none' : 'block';
+            stagesField.style.display = isHead ? 'none' : 'block';
+            headNote.classList.toggle('hidden', !isHead);
+
             stageGroups.forEach((group) => {
                 const categoryMatches = group.dataset.category === categorySelect.value;
                 group.classList.toggle('hidden', !categoryMatches);
@@ -111,6 +147,7 @@
 
         categorySelect.addEventListener('change', refresh);
         departmentSelect.addEventListener('change', refresh);
+        levelSelect.addEventListener('change', refresh);
         refresh();
     }
 

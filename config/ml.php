@@ -32,9 +32,40 @@ return [
     | met) is expensive.
     |
     | auto_train_max_auto_ratio: the cap on how much of the training pool
-    | can be auto-added samples, as a fraction of the ORIGINAL curated
-    | seed count — keeps the model anchored to human-verified samples
-    | even after a long stretch of automatic additions.
+    | can be auto-added real documents, as a fraction of the ORIGINAL
+    | curated seed count — keeps the model anchored to human-verified
+    | samples even after a long stretch of automatic additions. Real
+    | documents accumulate across every retrain now (a FIFO/replay-buffer
+    | window, oldest-uploaded dropped first once a category's real-document
+    | pool exceeds this cap — see autoTrainIfDue()'s corpus-building step),
+    | not just whichever batch triggered the most recent run — this ratio
+    | is what keeps that accumulating pool bounded instead of growing
+    | without limit over the system's lifetime.
+    |
+    | auto_train_confidence_ceiling: a document scoring AT OR ABOVE this
+    | confidence is excluded from the training queue entirely — the model
+    | already handles it well, so re-teaching it adds nothing (this is
+    | "uncertainty sampling" / "hard example mining": prioritize training
+    | on what the model is still unsure about). Still has to clear
+    | $belowChanceFloor above to be eligible at all, so the real training-
+    | eligible band is (chance floor, this ceiling) — currently roughly
+    | (33.33%, 75%) with 3 categories.
+    |
+    | near_duplicate_threshold: shared with AdminController::
+    | stageTrainingSamples()'s own near-duplicate warning for manually-
+    | staged curated samples — same underlying concern (a near-identical
+    | document teaches the model nothing new), same word-overlap fraction,
+    | one tunable number instead of two that could silently drift apart.
+    | Confirmed real scenario (2026-10-03): the same file uploaded twice
+    | both landed in the training queue, since nothing compared them to
+    | each other — this is what closes that gap for the automatic
+    | real-document pipeline too, not just the manual staging one. Chosen
+    | with headroom above what genuinely different same-category documents
+    | naturally share (~80%, from required boilerplate + domain terms) —
+    | real, distinct business documents in one category (different
+    | department, item, dates) were observed sharing up to ~80% of their
+    | vocabulary just from that shared boilerplate; 0.85 flags true
+    | near-copies without punishing legitimate variety.
     |
     */
 
@@ -42,6 +73,8 @@ return [
     'auto_train_max_age_hours' => 24,
     'auto_train_check_interval_minutes' => 5,
     'auto_train_max_auto_ratio' => 2.0,
+    'auto_train_confidence_ceiling' => 75,
+    'near_duplicate_threshold' => 0.85,
 
     // How many accuracy percentage points a retrain is allowed to drop
     // below the current active model before it's rolled back. Not zero —
