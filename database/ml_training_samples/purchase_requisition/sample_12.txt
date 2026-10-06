@@ -4,7 +4,7 @@ Department: Finance
 
 Item description and quantity: a new office chair batch to replace units flagged during the facilities walkthrough, 14 units requested.
 Budget: PHP 84,000.00.
-Date filed: June 12, 2026.
+Date filed: October 10, 2026.
 
 This was requested to address a gap identified during the department's recent inventory review.
 

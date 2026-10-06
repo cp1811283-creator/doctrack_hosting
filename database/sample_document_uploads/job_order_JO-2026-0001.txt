@@ -1,16 +1,11 @@
 Company Job Order Form
 
-Requested by: Angelica Bautista, on behalf of the Engineering department.
-Date requested: June 24, 2026.
+Requested by: Christina Villa, on behalf of the Engineering department.
+Date requested: October 5, 2026.
 
-Description of work: the automatic sliding door at the main entrance has been
-sticking intermittently and failing to close fully on some cycles, creating a
-security and air-conditioning loss concern. Please inspect the door's track,
-sensors, and motor assembly, clean and re-lubricate the rail, and recalibrate
-the sensor range so the door opens and closes reliably. Test through at least
-ten full cycles before signing off.
+Description of work: the staff pantry sink on the third floor has a slow drain that backs up during the lunch rush, leaving standing water and a smell. Please clear the trap and drain line, inspect the supply valves for leaks, and replace the damaged strainer. Confirm the drain runs freely with the faucet at full flow.
 
-Priority: High
-Target Completion: June 27, 2026
+Priority: Medium
+Target Completion: October 9, 2026
 
 Approved By: _______________________________

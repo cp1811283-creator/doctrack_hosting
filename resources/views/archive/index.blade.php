@@ -5,13 +5,7 @@
 @section('content')
 <div class="space-y-6">
 
-    @if($noCategoryAssigned)
-        <div class="bg-white rounded-xl shadow-card border border-surface-200 p-12 text-center">
-            <p class="text-sm text-surface-600 font-medium">No document category has been assigned to your account yet.</p>
-            <p class="text-xs text-surface-400 mt-1">Ask an Admin to assign you a category from User Accounts to unlock the archive.</p>
-        </div>
-
-    @elseif($showFolders)
+    @if($showFolders)
         {{-- Folders only — no search bar, no Import Legacy panel here.
              Both only make sense once you're inside a specific category
              (see the else branch below); showing them here duplicated the

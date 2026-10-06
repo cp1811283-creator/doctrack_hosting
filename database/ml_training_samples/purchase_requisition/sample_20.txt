@@ -2,7 +2,7 @@ PURCHASE REQUISITION REQUEST
 
 Department: Finance
 Requestor: Cristina Manalo
-Date: June 20, 2026
+Date: October 6, 2026
 
 Items requested: first-aid restocking and a defibrillator unit for the ground floor lobby (Qty: 1 lot).
 Total Cost: PHP 95,000.00.

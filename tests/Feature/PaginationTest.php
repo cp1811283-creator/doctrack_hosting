@@ -67,7 +67,7 @@ it('sends every account in one response for the Admin Users list (Feature: clien
 
     $response->assertOk();
     foreach ($originators as $originator) {
-        $response->assertSee($originator->username);
+        $response->assertSee($originator->email);
     }
     $response->assertDontSee('Next');
 });

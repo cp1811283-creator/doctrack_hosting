@@ -1,7 +1,7 @@
 PURCHASE REQUISITION
 
-Date: June 3, 2026
-Requested by: Edgar Ramos
+Date: October 7, 2026
+Requested by: Christina Villa
 
 Item Description: wireless ergonomic keyboards and mice for the accounting team
 Quantity: 9 sets

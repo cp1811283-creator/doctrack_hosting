@@ -1,18 +1,13 @@
 Purchase Requisition Form
 
-This request is filed by the Finance department on June 24, 2026.
-Requested by: Rolando Cruz
+This request is filed by the Finance department on October 6, 2026.
+Requested by: Louis Suan
 
 Department: Finance
-Item description: replacement label printers and thermal label rolls for the
-records archiving project, to replace two units that have stopped feeding
-paper reliably.
-Quantity: 3 units (printers) and 20 rolls (labels).
-Budget: PHP 36,500.00.
+Item description: replacement toner cartridges and a spare drum unit for the shared accounting printer on the second floor, which has been printing faint pages for a week.
+Quantity: 4 cartridges and 1 drum unit.
+Budget: PHP 18,200.00.
 
-Justification: current printers are over five years old and repeated repair
-attempts have not resolved the feed issue; continuing to run the archiving
-project without reliable label printing risks delays to the retention
-schedule.
+Justification: the current printer is used for every payroll and vendor report, and faint output has already caused two reprints. Keeping a spare drum on hand avoids another stoppage during the month-end close.
 
 Approved By: _______________________________

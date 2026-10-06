@@ -2,7 +2,7 @@ PURCHASE REQUISITION REQUEST
 
 Department: Engineering
 Requestor: Dominic Pascual
-Date: June 5, 2026
+Date: October 9, 2026
 
 Items requested: a new external backup drive array for the finance server (Qty: 2 units).
 Total Cost: PHP 65,000.00.

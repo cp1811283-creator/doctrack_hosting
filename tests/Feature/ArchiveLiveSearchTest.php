@@ -60,8 +60,8 @@ test('the refresh endpoint enforces the same RBAC as the full page for an approv
     $response->assertDontSee('other-category.txt');
 });
 
-test('refresh 404s for an approver with no assigned category, same as the full page', function () {
+test('refresh works for an approver with no assigned category (heads), same as the full page', function () {
     $approver = User::factory()->approver()->create(['assigned_category' => null]);
 
-    $this->actingAs($approver)->get(route('archive.refresh'))->assertNotFound();
+    $this->actingAs($approver)->get(route('archive.refresh'))->assertOk();
 });

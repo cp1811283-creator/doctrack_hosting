@@ -4,7 +4,7 @@ Department: Engineering
 
 Item description and quantity: uninterruptible power supply units for the network closet, 3 units requested.
 Budget: PHP 54,000.00.
-Date filed: June 7, 2026.
+Date filed: October 5, 2026.
 
 This was requested to address a gap identified during the department's recent inventory review.
 

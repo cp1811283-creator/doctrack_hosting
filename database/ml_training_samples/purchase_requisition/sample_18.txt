@@ -1,7 +1,7 @@
 PURCHASE REQUISITION
 
-Date: June 18, 2026
-Requested by: Vinz Lessur
+Date: October 10, 2026
+Requested by: Louis Suan
 
 Item Description: network switches to expand connectivity in the newly renovated east wing
 Quantity: 4 units

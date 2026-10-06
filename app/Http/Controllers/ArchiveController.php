@@ -22,11 +22,10 @@ use Illuminate\Support\Facades\Storage;
  *   - Admin sees every category, unrestricted, and can additionally import a
  *     pre-existing, already-approved legacy document straight into the
  *     repository (bypassing classification/validation/workflow entirely).
- *   - Approver is hard-scoped to their own `assigned_category` (admin-editable
- *     via Users > Manage Category & Stages, see AdminController::
- *     updateApproverStages()). An approver with no category assigned yet
- *     cannot browse the archive at all. This makes sense because multiple
- *     approvers typically split review work by document category.
+ *   - Approver sees only the approved documents they were assigned to during
+ *     the approval process (any category, including Other), so every
+ *     document they decided on stays retrievable after it is approved.
+ *     Heads and staff follow the same rule. Category does not limit access.
  *   - Originator is NOT scoped by category at all — an originator can
  *     upload any kind of document (the ML classifier determines its
  *     category automatically per upload), so tying their account to one
@@ -55,23 +54,9 @@ class ArchiveController extends Controller
     {
         $user = $request->user();
 
-        // Only Approver accounts can be "unassigned" in a way that blocks
-        // the archive entirely — Admin is unrestricted and Originator is
-        // scoped to their own submissions regardless of category.
-        if ($user->isApprover() && ! $user->assigned_category) {
-            return view('archive.index', [
-                'showFolders' => false,
-                'documents' => DocumentRepository::whereRaw('1 = 0')->paginate(10),
-                'restrictedCategory' => null,
-                'noCategoryAssigned' => true,
-                'isOwnSubmissionsView' => false,
-            ]);
-        }
-
-        // Approvers only ever have ONE category (their assigned_category),
-        // so a folder-picker screen would just be one folder to click
-        // through for no reason — they always go straight to the results
-        // view, same as before this feature existed. Admin/Originator see
+        // Approvers go straight to the results view — their archive is
+        // only the documents assigned to them, so a folder-picker screen
+        // would not help. Admin/Originator see
         // a folder grid first (Feature: browse by category), UNLESS
         // they've already got a search/filter active — that's what "search
         // everything from the folder screen" (below) transitions into.
@@ -84,7 +69,6 @@ class ArchiveController extends Controller
                 'showFolders' => true,
                 'folders' => $this->folderStats($user),
                 'restrictedCategory' => null,
-                'noCategoryAssigned' => false,
                 'isOwnSubmissionsView' => ! $user->isAdmin(),
             ]);
         }
@@ -94,8 +78,7 @@ class ArchiveController extends Controller
         return view('archive.index', [
             'showFolders' => false,
             'documents' => $documents,
-            'restrictedCategory' => $user->isApprover() ? $user->assigned_category : null,
-            'noCategoryAssigned' => false,
+            'restrictedCategory' => null,
             'isOwnSubmissionsView' => $isOwnSubmissionsView,
         ]);
     }
@@ -109,8 +92,6 @@ class ArchiveController extends Controller
     public function refresh(Request $request)
     {
         $user = $request->user();
-
-        abort_if($user->isApprover() && ! $user->assigned_category, 404);
 
         [$documents, $isOwnSubmissionsView] = $this->searchResults($request, $user);
 
@@ -130,7 +111,7 @@ class ArchiveController extends Controller
 
         if ($user->isApprover()) {
             // Hard RBAC restriction — approvers cannot override this via input.
-            $query->where('ml_category', $user->assigned_category);
+            $query->whereHas('assignments', fn ($assignments) => $assignments->where('user_id', $user->user_id));
         } elseif (! $user->isAdmin()) {
             // Originator: their own approved submissions, any category —
             // they may still narrow it down with the category filter below.
@@ -239,9 +220,9 @@ class ArchiveController extends Controller
             // Re-check on the individual document, not just at list time —
             // prevents an approver from downloading via a guessed URL.
             abort_unless(
-                $user->assigned_category && $document->ml_category === $user->assigned_category,
+                $document->assignments()->where('user_id', $user->user_id)->exists(),
                 403,
-                'This document is outside your assigned category.'
+                'You can only download documents assigned to you.'
             );
         } elseif (! $user->isAdmin()) {
             // Originator: can only download documents they themselves submitted.

@@ -1,15 +1,10 @@
 Field Service Report
 
-Technician assigned: Ferdinand Ilagan
-Date of service: June 24, 2026
+Technician assigned: Christina Villa
+Date of service: October 7, 2026
 
-This report covers the scheduled inspection and servicing of the standby
-fire pump in the basement utility room.
+This report covers the scheduled inspection and servicing of the main electrical panel in the ground-floor utility room.
 
-Findings: The pump started and ran successfully under test conditions,
-reaching rated pressure within the expected time window. The control panel
-battery was found near end of life and was replaced. All isolation valves
-were confirmed in their correct operating positions and re-tagged. No
-further issues were observed; next scheduled test is due in three months.
+Findings: All breakers were tested under load and operated within their rated limits. One cover screw was loose and was tightened. Thermal scan showed normal temperatures at every terminal. The panel's warning labels were faded and have been reprinted and reattached. No further issues were observed; next scheduled inspection is due in six months.
 
 Approved By: _______________________________

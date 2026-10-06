@@ -1,14 +1,16 @@
 <?php
 
+use App\Models\DocumentAssignment;
 use App\Models\DocumentRepository;
 use App\Models\User;
+use App\Models\WorkflowStage;
 
 function archivedDocument(User $originator, string $category, array $overrides = []): DocumentRepository
 {
     return DocumentRepository::create(array_merge([
         'originator_id' => $originator->user_id,
-        'title' => $overrides['title'] ?? "{$category}-" . uniqid() . '.txt',
-        'file_path' => 'documents/' . uniqid() . '.txt',
+        'title' => $overrides['title'] ?? "{$category}-".uniqid().'.txt',
+        'file_path' => 'documents/'.uniqid().'.txt',
         'mime_type' => 'text/plain',
         'due_date' => now()->addDay(),
         'upload_date' => now(),
@@ -49,7 +51,8 @@ test('clicking into a category folder shows the scoped results view', function (
 test('an approver never sees the folder grid, even with no filters — straight to their scoped results', function () {
     $approver = User::factory()->approver('Job Order')->create();
     $originator = User::factory()->originator()->create();
-    archivedDocument($originator, 'Job Order', ['title' => 'my-category-doc.txt']);
+    $document = archivedDocument($originator, 'Job Order', ['title' => 'my-category-doc.txt']);
+    assignApproverTo($approver, $document);
 
     $response = $this->actingAs($approver)->get(route('approver.archive'));
 
@@ -58,6 +61,52 @@ test('an approver never sees the folder grid, even with no filters — straight 
     $response->assertSee('my-category-doc.txt');
     $response->assertDontSee('Browse by Category');
 });
+
+test('an approver sees only approved documents they were assigned to, not every document in their category', function () {
+    $approver = User::factory()->approver('Job Order')->create();
+    $originator = User::factory()->originator()->create();
+    $assigned = archivedDocument($originator, 'Job Order', ['title' => 'assigned-doc.txt']);
+    archivedDocument($originator, 'Job Order', ['title' => 'unassigned-doc.txt']);
+    assignApproverTo($approver, $assigned);
+
+    $response = $this->actingAs($approver)->get(route('approver.archive'));
+
+    $response->assertOk();
+    $response->assertSee('assigned-doc.txt');
+    $response->assertDontSee('unassigned-doc.txt');
+});
+
+test('an approver with no category still sees the documents assigned to them in the archive', function () {
+    $head = User::factory()->approver()->create(['assigned_category' => null]);
+    $originator = User::factory()->originator()->create();
+    $document = archivedDocument($originator, 'Service Report', ['title' => 'head-assigned-doc.txt']);
+    assignApproverTo($head, $document);
+
+    $response = $this->actingAs($head)->get(route('approver.archive'));
+
+    $response->assertOk();
+    $response->assertSee('head-assigned-doc.txt');
+});
+
+function assignApproverTo(User $approver, DocumentRepository $document): void
+{
+    $stage = WorkflowStage::create([
+        'document_category' => $document->ml_category,
+        'sequence_order' => 1,
+        'stage_name' => 'Review',
+        'description' => 'Test stage.',
+    ]);
+
+    DocumentAssignment::create([
+        'document_id' => $document->document_id,
+        'stage_id' => $stage->stage_id,
+        'user_id' => $approver->user_id,
+        'individual_status' => 'approved',
+        'sla_expires_at' => now()->addHour(),
+        'priority_rank' => 1,
+        'auto_approved' => false,
+    ]);
+}
 
 test('an originator sees folder counts scoped to only their own submissions', function () {
     $originator = User::factory()->originator()->create();

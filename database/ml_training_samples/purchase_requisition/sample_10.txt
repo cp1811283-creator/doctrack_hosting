@@ -2,7 +2,7 @@ PURCHASE REQUISITION REQUEST
 
 Department: Finance
 Requestor: Angelica Bautista
-Date: June 10, 2026
+Date: October 8, 2026
 
 Items requested: bottled water dispensers for the pantry areas on floors 2 through 5 (Qty: 4 units).
 Total Cost: PHP 32,000.00.

@@ -4,7 +4,7 @@ Department: Finance
 
 Item description and quantity: industrial cleaning supplies for the janitorial staff, 1 lot requested.
 Budget: PHP 15,000.00.
-Date filed: June 2, 2026.
+Date filed: October 6, 2026.
 
 This was requested to address a gap identified during the department's recent inventory review.
 

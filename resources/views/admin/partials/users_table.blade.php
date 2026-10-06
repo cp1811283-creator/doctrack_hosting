@@ -59,7 +59,7 @@
                     <td class="px-3 py-3 text-surface-500 truncate">#{{ $u->user_id }}</td>
                     <td class="px-3 py-3">
                         <p class="font-medium text-surface-800 truncate">{{ $u->full_name }}</p>
-                        <p class="text-xs text-surface-400 truncate">{{ $u->username }} &middot; {{ $u->email }}</p>
+                        <p class="text-xs text-surface-400 truncate">{{ $u->email }}</p>
                         @unless($u->hasVerifiedEmail())
                             <span class="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-processing-100 text-processing-700">
                                 Unverified

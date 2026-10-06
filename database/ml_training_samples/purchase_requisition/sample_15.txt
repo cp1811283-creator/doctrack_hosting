@@ -2,7 +2,7 @@ PURCHASE REQUISITION REQUEST
 
 Department: Engineering
 Requestor: Arnel Domingo
-Date: June 15, 2026
+Date: October 7, 2026
 
 Items requested: whiteboard markers, erasers, and flip chart pads for all meeting rooms (Qty: 1 lot).
 Total Cost: PHP 5,200.00.
