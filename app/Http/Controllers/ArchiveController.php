@@ -54,22 +54,21 @@ class ArchiveController extends Controller
     {
         $user = $request->user();
 
-        // Approvers go straight to the results view — their archive is
-        // only the documents assigned to them, so a folder-picker screen
-        // would not help. Admin/Originator see
-        // a folder grid first (Feature: browse by category), UNLESS
-        // they've already got a search/filter active — that's what "search
+        // Staff approvers go straight to the flat results list of their
+        // assigned documents. Admin, Originator, and Head approvers see a
+        // folder grid first (Feature: browse by category), UNLESS they've
+        // already got a search/filter active — that's what "search
         // everything from the folder screen" (below) transitions into.
         $hasActiveFilters = $request->filled('category') || $request->filled('keyword')
             || $request->filled('date_from') || $request->filled('date_to');
-        $showFolders = ! $user->isApprover() && ! $hasActiveFilters;
+        $showFolders = $this->browsesByFolder($user) && ! $hasActiveFilters;
 
         if ($showFolders) {
             return view('archive.index', [
                 'showFolders' => true,
                 'folders' => $this->folderStats($user),
                 'restrictedCategory' => null,
-                'isOwnSubmissionsView' => ! $user->isAdmin(),
+                'isOwnSubmissionsView' => $user->isOriginator(),
             ]);
         }
 
@@ -81,6 +80,16 @@ class ArchiveController extends Controller
             'restrictedCategory' => null,
             'isOwnSubmissionsView' => $isOwnSubmissionsView,
         ]);
+    }
+
+    /**
+     * Admin, Originator, and Head approvers can use the category folders
+     * and the category filter. Staff approvers cannot: their archive is
+     * always a flat list of the documents assigned to them.
+     */
+    private function browsesByFolder($user): bool
+    {
+        return ! $user->isApprover() || $user->isHead();
     }
 
     /**
@@ -127,7 +136,7 @@ class ArchiveController extends Controller
         // desired_routing rather than ml_category (the classifier is
         // closed-set, so ml_category is ALWAYS one of the real known
         // categories even for a document flagged this way).
-        if (! $user->isApprover() && $request->filled('category')) {
+        if ($this->browsesByFolder($user) && $request->filled('category')) {
             $category = $request->string('category');
             $category->toString() === self::OTHER_FOLDER
                 ? $query->where('desired_routing', 'unrelated')
@@ -179,7 +188,9 @@ class ArchiveController extends Controller
     {
         $base = DocumentRepository::query()->whereIn('global_status', ['approved', 'auto_approved']);
 
-        if (! $user->isAdmin()) {
+        if ($user->isApprover()) {
+            $base->whereHas('assignments', fn ($assignments) => $assignments->where('user_id', $user->user_id));
+        } elseif (! $user->isAdmin()) {
             $base->where('originator_id', $user->user_id);
         }
 

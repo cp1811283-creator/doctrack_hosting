@@ -166,3 +166,59 @@ test('sort=oldest orders results oldest first instead of the newest-first defaul
     $documents = $response->viewData('documents');
     expect($documents->first()->title)->toBe('old-one.txt');
 });
+
+test('a head approver sees the category folders and the Other folder, not a flat list', function () {
+    $head = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head']);
+    $originator = User::factory()->originator()->create();
+    $document = archivedDocument($originator, 'Job Order', ['title' => 'head-folder-doc.txt']);
+    assignApproverTo($head, $document);
+
+    $response = $this->actingAs($head)->get(route('approver.archive'));
+
+    $response->assertOk();
+    $response->assertSee('Browse by Category');
+    $response->assertSee('Other');
+    $response->assertDontSee('head-folder-doc.txt');
+});
+
+test('a head approver only counts and opens folders with documents assigned to them', function () {
+    $head = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head']);
+    $originator = User::factory()->originator()->create();
+    $assigned = archivedDocument($originator, 'Job Order', ['title' => 'head-assigned.txt']);
+    archivedDocument($originator, 'Job Order', ['title' => 'head-unassigned.txt']);
+    assignApproverTo($head, $assigned);
+
+    $response = $this->actingAs($head)->get(route('approver.archive', ['category' => 'Job Order']));
+
+    $response->assertOk();
+    $response->assertSee('head-assigned.txt');
+    $response->assertDontSee('head-unassigned.txt');
+});
+
+test('a head approver can open the Other folder and see assigned unrelated documents', function () {
+    $head = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head']);
+    $originator = User::factory()->originator()->create();
+    $unrelated = archivedDocument($originator, 'Service Report', [
+        'title' => 'head-other-doc.txt',
+        'desired_routing' => 'unrelated',
+    ]);
+    assignApproverTo($head, $unrelated);
+
+    $response = $this->actingAs($head)->get(route('approver.archive', ['category' => 'Other']));
+
+    $response->assertOk();
+    $response->assertSee('head-other-doc.txt');
+});
+
+test('a staff approver still sees a flat list with no folder grid and no category filter', function () {
+    $staff = User::factory()->approver('Job Order')->create();
+    $originator = User::factory()->originator()->create();
+    $document = archivedDocument($originator, 'Job Order', ['title' => 'staff-flat-doc.txt']);
+    assignApproverTo($staff, $document);
+
+    $response = $this->actingAs($staff)->get(route('approver.archive', ['category' => 'Service Report']));
+
+    $response->assertOk();
+    $response->assertDontSee('Browse by Category');
+    $response->assertSee('staff-flat-doc.txt');
+});

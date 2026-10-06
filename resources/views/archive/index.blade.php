@@ -74,7 +74,7 @@
                  server and swaps them in without a page reload. The <form>
                  and Search/Clear buttons remain a working no-JS fallback. --}}
             <div class="bg-white rounded-xl shadow-card border border-surface-200 p-5">
-                @unless(auth()->user()->isApprover())
+                @unless(auth()->user()->isApprover() && auth()->user()->isStaffLevel())
                     {{-- Same pill styling as the "All Categories" back links
                          on SLA Violation Reports and Document Tracking —
                          light tint, ring, rounded-full — instead of a bare
