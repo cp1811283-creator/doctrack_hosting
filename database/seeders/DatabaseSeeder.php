@@ -13,151 +13,68 @@ class DatabaseSeeder extends Seeder
     /**
      * Idempotent by design — updateOrCreate()/firstOrCreate() keyed on the
      * unique columns, not create(). Running `php artisan db:seed` a second
-     * time (without a fresh migration first) previously threw a duplicate
-     * `username` error; it should always be safe to re-run.
+     * time (without a fresh migration first) should always be safe.
      *
-     * Real accounts, real Gmail addresses — start UNVERIFIED (no
-     * email_verified_at), same as any account an admin creates through the
-     * UI, and each gets a real verification email sent below. Necessary,
-     * not just convenient: on a genuinely fresh `migrate:fresh --seed`
-     * (a new deploy, or wiping this dev database), NOBODY can log in until
-     * verified, and there's no admin session yet to click "Resend
-     * verification" for anyone — including themselves. Without sending
-     * here, a fresh install would have no way in at all. See
-     * AuthController::login()/verifyEmail() and User::
-     * sendEmailVerificationNotification().
+     * Real accounts start UNVERIFIED (no email_verified_at), same as any
+     * account an admin creates through the UI, and each gets a real
+     * verification email sent below. Without that, a fresh install would
+     * have no way in at all. See AuthController::login()/verifyEmail() and
+     * User::sendEmailVerificationNotification().
      */
     public function run(): void
     {
         $admin = User::updateOrCreate(
-            ['username' => 'rvinz'],
+            ['username' => 'jhoncarl.jamon'],
             [
-                'full_name' => 'Russel Vinz',
-                'email' => 'aganarusselvinz@gmail.com',
+                'full_name' => 'Jhoncarl Jamon',
+                'email' => 'jhoncarl.jamon.ujfcorporation@gmail.com',
                 'role' => 'admin',
                 'assigned_category' => null,
-                'password_hash' => Hash::make('rvinz123'),
+                'password_hash' => Hash::make('jjamon123'),
                 'is_active' => true,
             ]
         );
 
-        // Real, currently-active originator account that existed live but
-        // was never actually represented in this seeder file — a fresh
-        // `migrate:fresh --seed` install would silently never reproduce it.
-        // Added to close that gap; not the same person/account as
-        // $vinzLessurApprover below despite the superficially similar name
-        // pattern (see that account's own docblock).
-        $allenRose = User::updateOrCreate(
-            ['username' => 'lvinz'],
-            [
-                'full_name' => 'Lessur Vinz',
-                'email' => 'lessurvinz@gmail.com',
-                'role' => 'originator',
-                'assigned_category' => null,
-                'password_hash' => Hash::make('lvinz123'),
-                'created_by' => $admin->user_id,
-                'is_active' => true,
-            ]
-        );
+        // Two originator accounts — any number of originators is
+        // supported, there's nothing category/department-specific about
+        // the role (see User::ROLES).
+        $originators = [
+            ['username' => 'christina.villa', 'full_name' => 'Christina Villa', 'email' => 'christina.villa.ujfcorporation@gmail.com', 'password' => 'cvilla123'],
+            ['username' => 'louis.suan', 'full_name' => 'Louis Suan', 'email' => 'louis.suan.ujfcorporation@gmail.com', 'password' => 'lsuan123'],
+        ];
 
-        // Job Order — Engineering department, staff level: Technical Review
-        // only. Previously unrestricted (eligible for every Job Order
-        // stage); narrowed once department separation meant an Engineering
-        // account could no longer legitimately also hold Budget Check
-        // (Finance) or Final Approval (head-level, not staff) — see
-        // WorkflowStageDepartment / the department-eligibility check in
-        // WorkflowService::eligibleApproversForStage().
-        $lessurVinz = User::updateOrCreate(
-            ['username' => 'gfunelas'],
-            [
-                'full_name' => 'Gian Funelas',
-                'email' => 'gianfunelas175@gmail.com',
-                'role' => 'approver',
-                'assigned_category' => 'Job Order',
-                'department' => 'Engineering',
-                'level' => 'staff',
-                'password_hash' => Hash::make('gfunelas123'),
-                'created_by' => $admin->user_id,
-                'is_active' => true,
-            ]
-        );
-
-
-         // Job Order — Finance department, staff level: Budget Check only.
-        // Live username renamed from "Vinz Lessur" (with a space — it had
-        // been created directly through the admin UI, not this seeder, so
-        // it never followed this file's short-username convention) to
-        // 'vlessur' to match this block, so this stays a real update rather
-        // than accidentally inserting a second, duplicate account.
-        // Previously held both Technical Review (Engineering) AND Budget
-        // Check (Finance) on one account; narrowed to Budget Check only for
-        // the same department-separation reason as $lessurVinz above.
-        $vinzLessurApprover = User::updateOrCreate(
-            ['username' => 'vlessur'],
-            [
-                'full_name' => 'Vinz Lessur',
-                'email' => 'vinzlessur@gmail.com',
-                'role' => 'approver',
-                'assigned_category' => 'Job Order',
-                'department' => 'Finance',
-                'level' => 'staff',
-                'password_hash' => Hash::make('vlessur123'),
-                'created_by' => $admin->user_id,
-                'is_active' => true,
-            ]
-        );
-
-
-
-        // Engineering department HEAD — sits on Job Order's Final Approval
-        // alongside the Finance head below (Final Approval requires both,
-        // unanimous, same as every other multi-seat stage). Was previously
-        // an unrestricted staff-level account and inactive; reactivated and
-        // promoted, not created fresh, at the user's specific request.
-        $christian = User::updateOrCreate(
-            ['username' => 'cperalta'],
-            [
-                'full_name' => 'Christian',
-                'email' => 'peraltachristian.m@gmail.com',
-                'role' => 'approver',
-                'assigned_category' => 'Job Order',
-                'department' => 'Engineering',
-                'level' => 'head',
-                'password_hash' => Hash::make('cperalta123'),
-                'created_by' => $admin->user_id,
-                'is_active' => true,
-            ]
-        );
-
-       
-
-        // Finance department HEAD — the other required seat on Job Order's
-        // Final Approval, alongside $christian above.
-        $financeHead = User::updateOrCreate(
-            ['username' => 'cperalta091022'],
-            [
-                'full_name' => 'Christian Peralta',
-                'email' => 'christianperalta091022@gmail.com',
-                'role' => 'approver',
-                'assigned_category' => 'Job Order',
-                'department' => 'Finance',
-                'level' => 'head',
-                'password_hash' => Hash::make('cperalta123'),
-                'created_by' => $admin->user_id,
-                'is_active' => true,
-            ]
-        );
-
-        // Skips anyone already verified — a re-run of this idempotent
-        // seeder (e.g. `db:seed` again without `migrate:fresh` first)
-        // shouldn't re-send a link to an account that already clicked it.
-        foreach ([$admin, $allenRose, $lessurVinz, $christian, $vinzLessurApprover, $financeHead] as $seededUser) {
-            if (!$seededUser->hasVerifiedEmail()) {
-                $seededUser->sendEmailVerificationNotification();
-            }
+        $createdOriginators = [];
+        foreach ($originators as $definition) {
+            $createdOriginators[] = User::updateOrCreate(
+                ['username' => $definition['username']],
+                [
+                    'full_name' => $definition['full_name'],
+                    'email' => $definition['email'],
+                    'role' => 'originator',
+                    'assigned_category' => null,
+                    'password_hash' => Hash::make($definition['password']),
+                    'created_by' => $admin->user_id,
+                    'is_active' => true,
+                ]
+            );
         }
 
-        // Default workflow pipelines per document category (Scope 1.4)
+        // Each approver's own department and level, plus the single category
+        // they handle. Heads have no assigned category — they cover every
+        // category's Final Approval for their own department (see
+        // WorkflowService::eligibleApproversForStage()). $stages lists the
+        // "Category:Stage" keys this approver is picked for (none for heads,
+        // who get Final Approval by level, not by pick).
+        $approvers = [
+            ['username' => 'judyann.bron', 'email' => 'judyann.bron.ujfcorporation@gmail.com', 'full_name' => 'Judyann Bron', 'category' => 'Job Order', 'department' => 'Engineering', 'level' => 'staff', 'stages' => ['Job Order:Technical Review']],
+            ['username' => 'melissa.jamon', 'email' => 'melissa.jamon.ujfcorporation@gmail.com', 'full_name' => 'Melissa Jamon', 'category' => 'Job Order', 'department' => 'Finance', 'level' => 'staff', 'stages' => ['Job Order:Budget Check']],
+            ['username' => 'elmor.castello', 'email' => 'elmor.castello1.ujfcorporation@gmail.com', 'full_name' => 'Elmor Castello', 'category' => null, 'department' => 'Engineering', 'level' => 'head', 'stages' => []],
+            ['username' => 'dianara.jamon', 'email' => 'dianara.jamon.ujfcorporationn@gmail.com', 'full_name' => 'Dianara Jamon', 'category' => null, 'department' => 'Finance', 'level' => 'head', 'stages' => []],
+            ['username' => 'jeferson.ulnagan', 'email' => 'jeferson.ulnagan.ujfcorporation@gmail.com', 'full_name' => 'Jeferson Ulnagan', 'category' => 'Purchase Requisition', 'department' => 'Finance', 'level' => 'staff', 'stages' => ['Purchase Requisition:Budget Check']],
+            ['username' => 'aljun.belarmino', 'email' => 'aljun.belarmino.ujfcorporation@gmail.com', 'full_name' => 'Aljun Belarmino', 'category' => 'Purchase Requisition', 'department' => 'Finance', 'level' => 'staff', 'stages' => ['Purchase Requisition:Procurement Review']],
+            ['username' => 'caleb.jamon', 'email' => 'caleb.jamon.ujfcorporation@gmail.com', 'full_name' => 'Caleb Jamon', 'category' => 'Service Report', 'department' => 'Engineering', 'level' => 'staff', 'stages' => ['Service Report:Quality Inspection']],
+        ];
+
         $pipelines = [
             'Job Order' => ['Technical Review', 'Budget Check', 'Final Approval'],
             'Purchase Requisition' => ['Budget Check', 'Procurement Review', 'Final Approval'],
@@ -175,23 +92,18 @@ class DatabaseSeeder extends Seeder
             }
         }
 
-        // Which department(s) own each stage — most stages belong to
-        // exactly one department; Job Order's Final Approval belongs to
-        // both (see WorkflowStageDepartment's docblock for why that's a
-        // real one-to-many table rather than a single column). Purchase
-        // Requisition and Service Report's Final Approval each stay
-        // single-department for now (Finance and Engineering respectively)
-        // since no head account has been set up yet to cover the other
-        // department there — see the open question in this feature's plan.
+        // Which department(s) own each stage. Final Approval is shared by
+        // Engineering and Finance in every category, so the same two heads
+        // (Elmor Castello, Dianara Jamon) sign off all three.
         $stageDepartments = [
             'Job Order:Technical Review' => ['Engineering'],
             'Job Order:Budget Check' => ['Finance'],
             'Job Order:Final Approval' => ['Engineering', 'Finance'],
             'Purchase Requisition:Budget Check' => ['Finance'],
             'Purchase Requisition:Procurement Review' => ['Finance'],
-            'Purchase Requisition:Final Approval' => ['Finance'],
+            'Purchase Requisition:Final Approval' => ['Engineering', 'Finance'],
             'Service Report:Quality Inspection' => ['Engineering'],
-            'Service Report:Final Approval' => ['Engineering'],
+            'Service Report:Final Approval' => ['Engineering', 'Finance'],
         ];
 
         foreach ($stageDepartments as $key => $departments) {
@@ -203,12 +115,38 @@ class DatabaseSeeder extends Seeder
             }
         }
 
-        // Restrict each seeded approver to exactly the stage their
-        // department/level combination owns (see the account definitions
-        // above) — sync() is idempotent, safe to re-run.
-        $lessurVinz->workflowStages()->sync([$stagesByName['Job Order:Technical Review']->stage_id]);
-        $vinzLessurApprover->workflowStages()->sync([$stagesByName['Job Order:Budget Check']->stage_id]);
-        $christian->workflowStages()->sync([$stagesByName['Job Order:Final Approval']->stage_id]);
-        $financeHead->workflowStages()->sync([$stagesByName['Job Order:Final Approval']->stage_id]);
+        $createdApprovers = [];
+        foreach ($approvers as $definition) {
+            $user = User::updateOrCreate(
+                ['username' => $definition['username']],
+                [
+                    'full_name' => $definition['full_name'],
+                    'email' => $definition['email'],
+                    'role' => 'approver',
+                    'assigned_category' => $definition['category'],
+                    'department' => $definition['department'],
+                    'level' => $definition['level'],
+                    'password_hash' => Hash::make(strtolower(explode(' ', $definition['full_name'])[0][0].explode(' ', $definition['full_name'])[1]).'123'),
+                    'created_by' => $admin->user_id,
+                    'is_active' => true,
+                ]
+            );
+
+            if ($definition['level'] === 'staff') {
+                $user->workflowStages()->sync(array_map(fn (string $key) => $stagesByName[$key]->stage_id, $definition['stages']));
+            } else {
+                $user->workflowStages()->sync([]);
+            }
+
+            $createdApprovers[] = $user;
+        }
+
+        // Skips anyone already verified — a re-run of this idempotent
+        // seeder shouldn't re-send a link to an account that already clicked it.
+        foreach (array_merge([$admin], $createdOriginators, $createdApprovers) as $seededUser) {
+            if (! $seededUser->hasVerifiedEmail()) {
+                $seededUser->sendEmailVerificationNotification();
+            }
+        }
     }
 }
