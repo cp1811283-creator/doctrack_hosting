@@ -110,6 +110,24 @@ class ArchiveController extends Controller
     }
 
     /**
+     * Live/poll refresh for the folder grid (Feature: the "Browse by
+     * Category" screen is the default landing view for every role now —
+     * see index()'s $showFolders — so its document counts and disputed/
+     * auto-approved badges need to update the same way the results view's
+     * own refresh already does, not just on a manual reload). Same data
+     * folderStats() already feeds index()'s own folder-view branch.
+     */
+    public function folderRefresh(Request $request)
+    {
+        $user = $request->user();
+
+        return view('archive.partials.folder-grid', [
+            'folders' => $this->folderStats($user),
+            'isOwnSubmissionsView' => $user->isOriginator(),
+        ]);
+    }
+
+    /**
      * @return array{0: Collection<int, DocumentRepository>, 1: bool}
      */
     private function searchResults(Request $request, $user): array
@@ -143,9 +161,14 @@ class ArchiveController extends Controller
         // categories even for a document flagged this way).
         if ($request->filled('category')) {
             $category = $request->string('category');
+            // The real-category branch also excludes 'unrelated' — same
+            // reasoning as folderStats()'s identical exclusion just above:
+            // an Unrelated document still carries the classifier's
+            // best-guess ml_category, and without this it would appear in
+            // both its guessed category's results AND Other's.
             $category->toString() === self::OTHER_FOLDER
                 ? $query->where('desired_routing', 'unrelated')
-                : $query->where('ml_category', $category);
+                : $query->where('ml_category', $category)->where('desired_routing', '!=', 'unrelated');
         }
 
         if ($request->filled('keyword')) {
@@ -208,7 +231,14 @@ class ArchiveController extends Controller
         $categories = $user->isApprover() ? $user->eligibleCategories() : ValidationService::knownCategories();
 
         $folders = collect($categories)->map(function ($category) use ($base) {
-            $categoryQuery = (clone $base)->where('ml_category', $category);
+            // Excludes a document explicitly routed Unrelated (desired_routing
+            // = 'unrelated') — it still carries the classifier's best-guess
+            // ml_category (see this class's own OTHER_FOLDER docblock for why
+            // that guess is kept at all), which without this would double-count
+            // it into BOTH this real category's folder AND the Other folder
+            // below. Confirmed real: a Purchase Requisition uploaded as
+            // Unrelated showed up in both.
+            $categoryQuery = (clone $base)->where('ml_category', $category)->where('desired_routing', '!=', 'unrelated');
 
             return (object) [
                 'category' => $category,

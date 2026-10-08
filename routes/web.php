@@ -277,6 +277,14 @@ Route::middleware('auth')->group(function () {
         ->middleware('throttle:polling')
         ->name('archive.refresh');
 
+    // Same live/poll pattern as archive.refresh just above, for the
+    // folder-grid screen instead of the results list — see
+    // ArchiveController::folderRefresh()'s own docblock.
+    Route::middleware('role:admin,originator,approver')
+        ->get('/archive/folders/refresh', [ArchiveController::class, 'folderRefresh'])
+        ->middleware('throttle:polling')
+        ->name('archive.folders.refresh');
+
     // Admin may also inspect any document's tracking page for support purposes.
     Route::middleware('role:admin,originator')->get('/documents/{document}/track', [DocumentController::class, 'show'])
         ->name('documents.track');

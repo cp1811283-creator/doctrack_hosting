@@ -276,3 +276,50 @@ test('a staff approver browsing their own category filter never sees a document 
 
     $response->assertOk()->assertDontSee('staff-flat-doc.txt');
 });
+
+test('the folder-grid live/poll refresh endpoint returns fresh tile counts', function () {
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    archivedDocument($originator, 'Job Order', ['title' => 'before-refresh.txt']);
+
+    $response = $this->actingAs($admin)->get(route('archive.folders.refresh'));
+
+    $response->assertOk()
+        ->assertSee('Browse by Category')
+        ->assertSee('Job Order')
+        ->assertSee('1 document');
+
+    // A second document lands after the first page load — the SAME
+    // endpoint (the one the live listener and poll both re-fetch) must
+    // reflect it without a full reload.
+    archivedDocument($originator, 'Job Order', ['title' => 'after-refresh.txt']);
+
+    $this->actingAs($admin)->get(route('archive.folders.refresh'))
+        ->assertOk()->assertSee('2 documents');
+});
+
+test('a document routed Unrelated appears only in the Other folder, not also under its classifier-guessed category', function () {
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    // Still carries a real ml_category guess (the classifier is closed-set
+    // — see ArchiveController::OTHER_FOLDER's own docblock) even though
+    // the originator routed it as Unrelated, filing it under Other.
+    $document = archivedDocument($originator, 'Purchase Requisition', [
+        'title' => 'unrelated-pr.txt', 'desired_routing' => 'unrelated', 'custom_routed' => true,
+    ]);
+
+    $otherResponse = $this->actingAs($admin)->get(route('admin.archive', ['category' => 'Other']));
+    $otherResponse->assertOk()->assertSee('unrelated-pr.txt');
+
+    $categoryResponse = $this->actingAs($admin)->get(route('admin.archive', ['category' => 'Purchase Requisition']));
+    $categoryResponse->assertOk()->assertDontSee('unrelated-pr.txt');
+
+    // The folder-grid counts must agree with the results views above —
+    // this document counts toward Other's total, never Purchase
+    // Requisition's.
+    $gridResponse = $this->actingAs($admin)->get(route('admin.archive'));
+    $gridResponse->assertOk();
+    $html = $gridResponse->getContent();
+    $otherCard = substr($html, strpos($html, '>Other<'));
+    expect($otherCard)->toContain('1 document');
+});

@@ -17,43 +17,8 @@
              that breaks the instant the grid needs more room than that
              (more categories, or a larger font size growing the heading/
              sidebar above it). h-64 below is only the pre-JS fallback. --}}
-        <div id="archive-folder-card">
-            <h2 class="text-sm font-semibold text-surface-900 mb-3">
-                Browse by Category
-                @if($isOwnSubmissionsView)
-                    <span class="text-xs font-normal text-surface-400">— your own approved submissions</span>
-                @endif
-            </h2>
-            {{-- Fixed 2-column grid (not a responsive 2/3/4-column one) so
-                 each tile gets a whole half-width column to grow into. --}}
-            <div class="folder-grid grid grid-cols-2 gap-8">
-                @foreach($folders as $folder)
-                    <a href="{{ url()->current() }}?category={{ urlencode($folder->category) }}" class="group block">
-                        {{-- Two rounded pieces (tab + body), not a clip-path
-                             polygon — clip-path only does straight-line corners,
-                             which read as "pointy" rather than a real folder.
-                             Gradients on both pieces give it depth instead of a
-                             flat fill. Same blue gradient as the sidebar's "D"
-                             logo badge (layouts/app.blade.php) — from-primary-400
-                             to-primary-600 — for brand consistency. --}}
-                        <div class="folder-tile-tab w-40 h-10 ml-8 rounded-t-lg bg-gradient-to-br from-primary-300 to-primary-500 group-hover:from-primary-400 group-hover:to-primary-600 transition-colors"></div>
-                        <div class="folder-tile-body -mt-px h-64 rounded-b-xl rounded-tr-xl bg-gradient-to-br from-primary-400 to-primary-600 group-hover:from-primary-500 group-hover:to-primary-700 shadow-lg group-hover:shadow-xl group-hover:-translate-y-0.5 transition-all flex flex-col items-center justify-center text-center px-4">
-                            <h3 class="text-xl font-semibold text-white drop-shadow-sm">{{ $folder->category }}</h3>
-                            <p class="text-sm text-primary-100 mt-1">{{ $folder->total }} document{{ $folder->total === 1 ? '' : 's' }}</p>
-                            @if($folder->disputed > 0 || $folder->auto_approved > 0)
-                                <div class="flex flex-wrap justify-center gap-1.5 mt-3">
-                                    @if($folder->disputed > 0)
-                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white text-processing-700">{{ $folder->disputed }} disputed</span>
-                                    @endif
-                                    @if($folder->auto_approved > 0)
-                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-white text-approved-700">{{ $folder->auto_approved }} auto-approved</span>
-                                    @endif
-                                </div>
-                            @endif
-                        </div>
-                    </a>
-                @endforeach
-            </div>
+        <div id="archive-folder-card" data-refresh-url="{{ route('archive.folders.refresh') }}" data-user-id="{{ auth()->id() }}">
+            @include('archive.partials.folder-grid')
         </div>
 
     @else
@@ -190,10 +155,42 @@
         // since the two screens are mutually exclusive, picked further up
         // this same template based on whether a category is active;
         // guarded because only one of the two ever exists on a given load.
+        const folderCard = document.getElementById('archive-folder-card');
         const folderGrid = document.querySelector('#archive-folder-card .folder-grid');
         if (folderGrid) {
             sizeFolderGrid(folderGrid);
             window.addEventListener('resize', () => sizeFolderGrid(folderGrid));
+
+            // Live/poll refresh (Feature: the folder tiles' own document
+            // counts and disputed/auto-approved badges used to only ever
+            // reflect whatever was true at page load — every OTHER
+            // refreshable view in this app already updates itself; this
+            // screen just hadn't been wired up to the same pattern yet).
+            // Re-fetches and swaps this card's whole contents, same
+            // reasoning as runSearch() below for the results view —
+            // re-measuring sizeFolderGrid() after the swap, since the
+            // grid element itself gets replaced.
+            const runFolderRefresh = () => {
+                fetch(folderCard.dataset.refreshUrl, { headers: { Accept: 'text/html' } })
+                    .then((res) => (res.ok ? res.text() : Promise.reject(res)))
+                    .then((html) => {
+                        folderCard.innerHTML = html;
+                        const freshGrid = folderCard.querySelector('.folder-grid');
+                        if (freshGrid) sizeFolderGrid(freshGrid);
+                    })
+                    .catch(() => {}); // aborted/failed — leave the last good tiles showing
+            };
+
+            if (window.Echo) {
+                @if(auth()->user()->isAdmin())
+                    window.Echo.private('admin-dashboard').listen('.document.status-changed', runFolderRefresh);
+                @elseif(auth()->user()->isOriginator())
+                    window.Echo.private(`originator.${folderCard.dataset.userId}`).listen('.document.status-changed', runFolderRefresh);
+                @elseif(auth()->user()->isApprover())
+                    window.Echo.private('approvers').listen('.document.status-changed', runFolderRefresh);
+                @endif
+            }
+            setInterval(runFolderRefresh, (45 + Math.random() * 30) * 1000);
         }
 
         const resultsEl = document.getElementById('archive-results');
