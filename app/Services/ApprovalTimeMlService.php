@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Events\MlModelTrained;
 use App\Models\DocumentAssignment;
 use App\Models\MlTimeEstimateModel;
+use App\Models\WorkflowStage;
 use App\Support\DecisionTiming;
 use App\Support\RidgeRegression;
 use Carbon\Carbon;
@@ -73,11 +74,29 @@ class ApprovalTimeMlService
      * (there is no "train now" control for this model; see this class's
      * docblock). Below the training floor it's just a progress count;
      * once trained, the active model's own stats.
+     *
+     * Filtered down to combos that still match the CURRENT workflow
+     * config (see currentlyValidCombos()) — a department that used to
+     * own a stage (e.g. Service Report's Final Approval briefly included
+     * Finance before that was corrected to Engineering-only) leaves real
+     * decision rows behind permanently; without this filter that combo
+     * would sit here forever, frozen below the training floor, since no
+     * NEW decision can ever be added to it once the config no longer
+     * routes that department there.
      */
     public function statusForAllGroups(): Collection
     {
+        $stagesByCategory = $this->currentlyConfiguredStages();
+
         return $this->rows()
             ->groupBy(fn ($row) => $row->ml_category.'|'.$row->department)
+            ->filter(function (Collection $rows, string $key) use ($stagesByCategory) {
+                [$category, $department] = explode('|', $key, 2);
+
+                return ($stagesByCategory->get($category) ?? collect())
+                    ->contains(fn (WorkflowStage $stage) => empty($stage->departmentNames())
+                        || in_array($department, $stage->departmentNames(), true));
+            })
             ->map(function (Collection $rows) {
                 $category = $rows->first()->ml_category;
                 $department = $rows->first()->department;
@@ -92,6 +111,24 @@ class ApprovalTimeMlService
             })
             ->sortBy(fn ($row) => $row['ml_category'].$row['department'])
             ->values();
+    }
+
+    /**
+     * Every configured, non-archived stage, grouped by its own category —
+     * used purely to filter statusForAllGroups() down to (category,
+     * department) combos the CURRENT workflow config could still actually
+     * route a decision to. A stage with zero WorkflowStageDepartment rows
+     * is unrestricted (see that model's own docblock — "zero rows means
+     * unrestricted"), so it validates EVERY department for its category,
+     * not none; a stage with explicit rows only validates those. Doesn't
+     * filter trainFor()/predictNextDecision() — a model already trained
+     * on a now-stale combo should keep predicting until it's naturally
+     * replaced, not be torn down the moment the config changes.
+     */
+    private function currentlyConfiguredStages(): Collection
+    {
+        return WorkflowStage::configured()->where('is_archived', false)->with('departments')->get()
+            ->groupBy('document_category');
     }
 
     /**

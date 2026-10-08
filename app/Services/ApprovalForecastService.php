@@ -225,14 +225,19 @@ class ApprovalForecastService
                 ->count())
             ->max() ?? 0;
 
-        // The trained model only ever covers ONE specific (category,
-        // department) combo — only usable when this stage's eligible pool
-        // resolves to exactly one department; a stage jointly owned by
-        // multiple departments, or with no department set at all, keeps
-        // using the plain average, same as before ML existed.
-        $mlPrediction = $departments->count() === 1
-            ? $this->timeMl->predictNextDecision($document->ml_category, $departments->first(), $eligibleApprovers)
-            : null;
+        // A single trained model only ever covers ONE specific (category,
+        // department) combo. A stage owned by exactly one department uses
+        // it directly; a stage shared by several (e.g. Job Order's Final
+        // Approval, open to both Engineering and Finance heads) tries
+        // EVERY eligible department's own model instead of skipping ML
+        // outright — see combinedMlPredictionForDepartments()'s docblock
+        // for why that only counts once every one of them is trained, not
+        // as soon as the first one is.
+        $mlPrediction = match ($departments->count()) {
+            0 => null,
+            1 => $this->timeMl->predictNextDecision($document->ml_category, $departments->first(), $eligibleApprovers),
+            default => $this->combinedMlPredictionForDepartments($document->ml_category, $departments, $eligibleApprovers),
+        };
 
         // ML's own prediction replaces the average for THIS stage's own
         // decision only; the queue-depth padding still uses the plain
@@ -247,6 +252,34 @@ class ApprovalForecastService
         // documents that had longer windows, or the queue padding piling up)
         // would promise a time that can never actually happen.
         return $slaSeconds !== null ? min($estimate, $slaSeconds) : $estimate;
+    }
+
+    /**
+     * A stage shared by more than one department (e.g. Job Order's Final
+     * Approval) can't be predicted by a single trained model — Ridge is
+     * always trained for one specific (category, department) pair. This
+     * asks each eligible department's own model for its prediction and,
+     * ONLY once every single one of them is trained, uses the SLOWEST of
+     * their predictions — same "unanimous approval waits on its slowest
+     * eligible approver" reasoning as the queue-depth padding below,
+     * since a stage open to several departments still isn't resolved
+     * until whichever one actually ends up deciding it finishes, and
+     * there's no way to know in advance which one that'll be.
+     *
+     * Deliberately returns null (falls through to the plain average) the
+     * moment even ONE department isn't trained yet, rather than using
+     * just the trained ones: an untrained department has no prediction to
+     * compare, and guessing with only half the picture risks understating
+     * the real wait if that untrained department turns out to be the
+     * slower one — see estimateStageSeconds()'s own call site.
+     */
+    private function combinedMlPredictionForDepartments(string $category, Collection $departments, Collection $eligibleApprovers): ?int
+    {
+        $predictions = $departments
+            ->map(fn (string $department) => $this->timeMl->predictNextDecision($category, $department, $eligibleApprovers))
+            ->filter(fn (?int $prediction) => $prediction !== null);
+
+        return $predictions->count() === $departments->count() ? $predictions->max() : null;
     }
 
     /**

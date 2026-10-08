@@ -5,6 +5,7 @@ use App\Models\DocumentRepository;
 use App\Models\User;
 use App\Models\WorkflowStage;
 use App\Services\ApprovalForecastService;
+use App\Services\ApprovalTimeMlService;
 use App\Services\BusinessHoursService;
 use App\Services\WorkflowService;
 use Carbon\Carbon;
@@ -490,4 +491,53 @@ test('a document that has not reached its approvers yet still gets an estimate w
     // left, capped at 6 hours.
     expect($estimate)->not->toBeNull()
         ->and($estimate->totalSeconds)->toBe(6 * 3600.0);
+});
+
+test('a Final Approval shared by two departments uses the slower of their two trained ML predictions, once both are trained', function () {
+    $ml = app(ApprovalTimeMlService::class);
+    $originator = User::factory()->originator()->create();
+
+    // Archived, so it never shows up as a configured stage for Job Order
+    // (see unresolvedStages()) — purely somewhere to attach the training
+    // history's own assignments without it competing as a real review
+    // stage alongside the Final Approval stage under test.
+    $trainingStage = WorkflowStage::create([
+        'document_category' => 'Job Order', 'stage_name' => 'Training History', 'sequence_order' => 99, 'is_archived' => true,
+    ]);
+
+    $engineer = User::factory()->approver('Job Order')->create(['department' => 'Engineering']);
+    $financier = User::factory()->approver('Job Order')->create(['department' => 'Finance']);
+
+    // Engineering decides fast (2 min); Finance decides much slower (2
+    // hours) — deliberately far apart so which one "wins" is unambiguous.
+    foreach ([[$engineer, 2], [$financier, 120]] as [$approver, $minutes]) {
+        foreach (range(0, ApprovalTimeMlService::MIN_TRAINING_SAMPLES - 1) as $i) {
+            $this->travelTo(Carbon::parse(['2026-08-10 10:00:00', '2026-08-11 10:00:00', '2026-08-12 10:00:00', '2026-08-13 10:00:00', '2026-08-14 10:00:00'][$i % 5]));
+            $doc = forecastDoc($originator);
+            DocumentAssignment::create([
+                'document_id' => $doc->document_id, 'user_id' => $approver->user_id, 'stage_id' => $trainingStage->stage_id,
+                'due_date' => $doc->due_date, 'priority_rank' => 2, 'individual_status' => 'approved',
+                'sla_expires_at' => now()->addHours(4), 'acted_at' => now()->addMinutes($minutes), 'auto_approved' => false,
+            ]);
+        }
+    }
+
+    expect($ml->trainFor('Job Order', 'Engineering'))->not->toBeNull();
+    expect($ml->trainFor('Job Order', 'Finance'))->not->toBeNull();
+
+    WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Final Approval', 'sequence_order' => 1]);
+    $this->travelTo(Carbon::parse('2026-08-17 09:00:00')); // a fresh Monday, clear of the training history above
+    $document = forecastDoc($originator, dueDate: now()->addDays(30));
+
+    $estimate = app(ApprovalForecastService::class)->estimateFor($document);
+
+    // Both eligible approvers (Engineer + Financier) have zero OTHER
+    // pending work, so queue-depth padding is 0 — the result is purely
+    // whichever of the two trained predictions is larger. A plain pooled
+    // average across both departments' history would land near an hour;
+    // picking up only Engineering's own fast model would land near 2
+    // minutes. Neither of those clears 90 minutes — only genuinely
+    // picking Finance's (the slower) trained prediction does.
+    expect($estimate)->not->toBeNull()
+        ->and($estimate->totalSeconds)->toBeGreaterThan(90 * 60);
 });

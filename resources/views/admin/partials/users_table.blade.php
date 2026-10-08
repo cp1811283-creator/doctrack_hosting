@@ -180,8 +180,8 @@
                                         <form method="POST" action="{{ route('admin.users.toggle', $u) }}" class="flex flex-col w-full max-w-sm bg-white shadow-elevated border border-surface-200 rounded-xl p-5">
                                             @csrf
                                             <h3 class="text-sm font-semibold text-surface-900 mb-3">Deactivate {{ $u->full_name }}?</h3>
-                                            <label class="block text-[11px] font-medium text-surface-600 mb-1">Reason (optional)</label>
-                                            <textarea name="reason" rows="3" maxlength="500" placeholder="e.g. Resigned, role change…"
+                                            <label class="block text-[11px] font-medium text-surface-600 mb-1">Reason</label>
+                                            <textarea name="reason" rows="3" maxlength="500" required placeholder="e.g. Resigned, role change…"
                                                 class="block w-full rounded-lg border-surface-300 text-xs px-2 py-1.5 focus:border-primary-500 focus:ring-primary-500 mb-3"></textarea>
                                             <button type="submit" class="block w-full bg-rejected-600 hover:bg-rejected-700 text-white text-xs font-medium py-2 rounded-lg transition-colors">
                                                 Confirm Deactivation

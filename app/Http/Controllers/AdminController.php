@@ -1333,7 +1333,14 @@ class AdminController extends Controller
      */
     public function toggleUser(Request $request, User $user)
     {
-        $validated = $request->validate(['reason' => ['nullable', 'string', 'max:500']]);
+        // Required only when this call is actually a deactivation (the
+        // user is currently active) — the Activate button reuses this
+        // exact same endpoint for reactivating someone and never submits
+        // a reason field at all, so an unconditional 'required' here
+        // would break that path. $user->is_active still reads the
+        // PRE-toggle state at this point, since the toggle below hasn't
+        // run yet.
+        $validated = $request->validate(['reason' => [$user->is_active ? 'required' : 'nullable', 'string', 'max:500']]);
         $reason = $validated['reason'] ?? null;
         $wasActive = $user->is_active;
 

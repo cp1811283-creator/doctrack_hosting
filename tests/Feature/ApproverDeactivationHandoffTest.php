@@ -44,7 +44,7 @@ test('deactivating an approver with a pending assignment reassigns it to an elig
     $assignment = pendingHandoffAssignmentFor($oldApprover, 'Job Order');
     $originalDeadline = $assignment->sla_expires_at;
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $oldApprover))->assertRedirect();
+    $this->actingAs($admin)->post(route('admin.users.toggle', $oldApprover), ['reason' => 'test deactivation'])->assertRedirect();
 
     $fresh = $assignment->fresh();
     expect($fresh->user_id)->toBe($newApprover->user_id)
@@ -70,12 +70,12 @@ test('reassignment picks the least busy eligible approver when more than one exi
 
     $assignment = pendingHandoffAssignmentFor($oldApprover, 'Job Order', 'Review');
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $oldApprover))->assertRedirect();
+    $this->actingAs($admin)->post(route('admin.users.toggle', $oldApprover), ['reason' => 'test deactivation'])->assertRedirect();
 
     expect($assignment->fresh()->user_id)->toBe($freeApprover->user_id);
 });
 
-test('an optional deactivation reason is stored on the reassigned assignment and audit log', function () {
+test('a deactivation reason is stored on the reassigned assignment and audit log', function () {
     $admin = User::factory()->admin()->create();
     $oldApprover = User::factory()->approver('Job Order')->create();
     $newApprover = User::factory()->approver('Job Order')->create();
@@ -100,7 +100,7 @@ test('when no eligible approver exists, the assignment is auto-approved immediat
     $onlyApprover = User::factory()->approver('Service Report')->create();
     $assignment = pendingHandoffAssignmentFor($onlyApprover, 'Service Report');
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $onlyApprover))->assertRedirect();
+    $this->actingAs($admin)->post(route('admin.users.toggle', $onlyApprover), ['reason' => 'test deactivation'])->assertRedirect();
 
     $fresh = $assignment->fresh();
     expect($fresh->individual_status)->toBe('approved')
@@ -138,7 +138,7 @@ test('reassigning one pending stage does not touch a sibling stage another appro
         'due_date' => $document->due_date, 'priority_rank' => 2, 'individual_status' => 'approved', 'acted_at' => now(), 'sla_expires_at' => now()->addHours(3),
     ]);
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $approver1))->assertRedirect();
+    $this->actingAs($admin)->post(route('admin.users.toggle', $approver1), ['reason' => 'test deactivation'])->assertRedirect();
 
     expect($assignmentA->fresh()->user_id)->toBe($newApprover->user_id)
         ->and($assignmentB->fresh()->individual_status)->toBe('approved')
@@ -160,7 +160,7 @@ test('the workflow stage list shows a Reassigned badge for a handed-off stage', 
     $newApprover = User::factory()->approver('Job Order')->create(['full_name' => 'New Approver']);
     $assignment = pendingHandoffAssignmentFor($oldApprover, 'Job Order');
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $oldApprover));
+    $this->actingAs($admin)->post(route('admin.users.toggle', $oldApprover), ['reason' => 'test deactivation']);
 
     $response = $this->actingAs($newApprover)->get(route('approver.dashboard'));
     $response->assertOk();

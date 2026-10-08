@@ -373,3 +373,57 @@ test('a Final Approval decided before the other stages keeps its own start — t
 
     expect((int) $rows->firstWhere('user_id', $head->user_id)->elapsed_seconds)->toBe(3600); // 09:00 -> 10:00
 });
+
+test('statusForAllGroups excludes a department combo that no longer matches the current workflow config', function () {
+    // The only Job Order stage CURRENTLY configured — Engineering only.
+    $stage = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Final Approval', 'sequence_order' => 1]);
+    $stage->departments()->create(['department' => 'Engineering']);
+
+    $originator = User::factory()->originator()->create();
+    $validApprover = User::factory()->approver('Job Order')->create(['department' => 'Engineering']);
+    // A department with real past decisions that no longer matches any
+    // configured stage for this category — e.g. left over from before a
+    // department-routing fix, same real scenario as Service Report once
+    // briefly including Finance before being corrected to Engineering-only.
+    $staleApprover = User::factory()->approver('Job Order')->create(['department' => 'Marketing']);
+
+    foreach ([$validApprover, $staleApprover] as $approver) {
+        $document = DocumentRepository::create([
+            'originator_id' => $originator->user_id, 'title' => 'status-'.$approver->user_id.'.txt',
+            'file_path' => 'documents/status-'.$approver->user_id.'.txt', 'mime_type' => 'text/plain',
+            'ml_category' => 'Job Order', 'is_validated' => true, 'due_date' => now()->addDays(3),
+            'global_status' => 'classified_validated',
+        ]);
+        DocumentAssignment::create([
+            'document_id' => $document->document_id, 'user_id' => $approver->user_id, 'stage_id' => $stage->stage_id,
+            'due_date' => $document->due_date, 'priority_rank' => 2, 'individual_status' => 'approved',
+            'sla_expires_at' => now()->addHours(4), 'acted_at' => now()->addMinutes(10), 'auto_approved' => false,
+        ]);
+    }
+
+    $statuses = app(ApprovalTimeMlService::class)->statusForAllGroups();
+
+    expect($statuses->pluck('department'))->toContain('Engineering')->not->toContain('Marketing');
+});
+
+test('statusForAllGroups still includes a department on a stage that has no department restriction at all', function () {
+    // Zero WorkflowStageDepartment rows on this stage means unrestricted
+    // — every department stays valid for it, not none (see
+    // WorkflowStageDepartment's own docblock).
+    $stage = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Only Stage', 'sequence_order' => 1]);
+
+    $originator = User::factory()->originator()->create();
+    $approver = User::factory()->approver('Job Order')->create(['department' => 'Engineering']);
+    $document = DocumentRepository::create([
+        'originator_id' => $originator->user_id, 'title' => 'unrestricted.txt', 'file_path' => 'documents/unrestricted.txt',
+        'mime_type' => 'text/plain', 'ml_category' => 'Job Order', 'is_validated' => true,
+        'due_date' => now()->addDays(3), 'global_status' => 'classified_validated',
+    ]);
+    DocumentAssignment::create([
+        'document_id' => $document->document_id, 'user_id' => $approver->user_id, 'stage_id' => $stage->stage_id,
+        'due_date' => $document->due_date, 'priority_rank' => 2, 'individual_status' => 'approved',
+        'sla_expires_at' => now()->addHours(4), 'acted_at' => now()->addMinutes(10), 'auto_approved' => false,
+    ]);
+
+    expect(app(ApprovalTimeMlService::class)->statusForAllGroups()->pluck('department'))->toContain('Engineering');
+});

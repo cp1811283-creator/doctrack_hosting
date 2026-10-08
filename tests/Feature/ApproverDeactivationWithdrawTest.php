@@ -91,7 +91,7 @@ it('finalizes the document once the remaining approver decides after a withdrawa
     [$admin, $approvers, $document] = deactivationWithdrawTestSetup(2);
     [$approverA, $approverB] = $approvers;
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $approverA), ['reason' => null]);
+    $this->actingAs($admin)->post(route('admin.users.toggle', $approverA), ['reason' => 'test deactivation']);
 
     $seatB = DocumentAssignment::where('document_id', $document->document_id)->where('user_id', $approverB->user_id)->first();
     seedReviewTime($approverB, $document);
@@ -105,11 +105,11 @@ it('auto-approves the last real approver instead of withdrawing, when a prior si
     [$approverA, $approverB] = $approvers;
 
     // First deactivation: A withdraws, covered by B.
-    $this->actingAs($admin)->post(route('admin.users.toggle', $approverA), ['reason' => null]);
+    $this->actingAs($admin)->post(route('admin.users.toggle', $approverA), ['reason' => 'test deactivation']);
     // Second deactivation: B is now the only REAL seat left — must
     // auto-approve immediately, not withdraw (A's row is already
     // withdrawn and doesn't count as cover).
-    $this->actingAs($admin)->post(route('admin.users.toggle', $approverB), ['reason' => null]);
+    $this->actingAs($admin)->post(route('admin.users.toggle', $approverB), ['reason' => 'test deactivation']);
 
     $seatA = DocumentAssignment::where('document_id', $document->document_id)->where('user_id', $approverA->user_id)->first();
     $seatB = DocumentAssignment::where('document_id', $document->document_id)->where('user_id', $approverB->user_id)->first();
@@ -124,7 +124,7 @@ it('excludes a withdrawn seat from the workflow-stage-list progress count', func
     [$admin, $approvers, $document] = deactivationWithdrawTestSetup(2);
     [$approverA, $approverB] = $approvers;
 
-    $this->actingAs($admin)->post(route('admin.users.toggle', $approverA), ['reason' => null]);
+    $this->actingAs($admin)->post(route('admin.users.toggle', $approverA), ['reason' => 'test deactivation']);
 
     $response = $this->actingAs($approverB)->get(route('approver.dashboard'));
     $response->assertOk();
