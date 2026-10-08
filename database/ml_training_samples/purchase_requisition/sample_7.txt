@@ -1,6 +1,7 @@
 REQUEST FOR PURCHASE
 
 Department: Engineering
+Requested by: Christina Villa
 
 Item description and quantity: uninterruptible power supply units for the network closet, 3 units requested.
 Budget: PHP 54,000.00.

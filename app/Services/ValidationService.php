@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\DocumentRepository;
+use App\Models\MlStagingSample;
+
 /**
  * ValidationService
  * ------------------
@@ -36,6 +39,13 @@ class ValidationService
                 ['date requested', 'date needed', 'requested date'],
                 ['requested by', 'requestor', 'requested for'],
                 ['description of work', 'work description', 'scope of work'],
+                // Added (2026-10-08) — Job Order's pipeline has had a
+                // Budget Check stage since the workflow redesign, but
+                // nothing ever required the document to actually contain
+                // a budget/cost figure, so that approver had nothing to
+                // check. Purchase Requisition already requires this same
+                // kind of field for its own Budget Check stage.
+                ['estimated cost', 'estimated budget', 'budget', 'cost estimate'],
             ],
             'min_word_count' => 30,
         ],
@@ -50,7 +60,13 @@ class ValidationService
         ],
         'Service Report' => [
             'required_sections' => [
-                ['technician'],
+                // 'technician' deliberately dropped (2026-10-08) — who
+                // physically did the field work is outside what this
+                // system actually tracks or has any record of. The
+                // originator who files the report is office staff, not
+                // the technician; requiring a technician's name here
+                // asked a document to contain information nobody
+                // submitting it would reliably have.
                 ['date of service', 'service date', 'date serviced'],
                 ['findings', 'observations'],
             ],
@@ -94,7 +110,7 @@ class ValidationService
         $errors = [];
         $template = self::TEMPLATES[$category] ?? null;
 
-        if (!$template) {
+        if (! $template) {
             return ['is_valid' => false, 'errors' => ["Unrecognized document category: {$category}"], 'readability_score' => null, 'readability_note' => null];
         }
 
@@ -109,11 +125,11 @@ class ValidationService
                 }
             }
 
-            if (!$found) {
+            if (! $found) {
                 // The first variant is the canonical display name — same
                 // wording every existing error message/test already
                 // expects, just now backed by a list instead of one string.
-                $errors[] = "Missing required section/field: \"" . ucwords($variants[0]) . "\"";
+                $errors[] = 'Missing required section/field: "'.ucwords($variants[0]).'"';
             }
         }
 
@@ -193,7 +209,7 @@ class ValidationService
      * avoids redundant identical queries. categoryVocabulary() itself
      * stays uncached everywhere else — see its own docblock for why.
      *
-     * @param array<string,true>|null $vocabulary from vocabularyFor()
+     * @param  array<string,true>|null  $vocabulary  from vocabularyFor()
      * @return array{score: ?int, note: ?string}
      */
     public function readabilityWithVocabulary(?array $vocabulary, string $category, string $text): array
@@ -266,7 +282,7 @@ class ValidationService
 
     /**
      * @return array<string,true>|null keyed by word for O(1) lookup, or
-     *         null if the category doesn't have enough staged samples yet
+     *                                 null if the category doesn't have enough staged samples yet
      *
      * Deliberately not cached — the category counts here (tens, not
      * thousands, of samples) make re-querying and re-tokenizing on every
@@ -291,12 +307,12 @@ class ValidationService
      */
     private static function categoryVocabulary(string $category): ?array
     {
-        $curatedSamples = \App\Models\MlStagingSample::curatedTextsFor($category);
+        $curatedSamples = MlStagingSample::curatedTextsFor($category);
         if ($curatedSamples->count() < self::MIN_VOCABULARY_SAMPLES) {
             return null; // the cold-start bar is about curated data specifically — same bar the ML Training page uses
         }
 
-        $routedSamples = \App\Models\DocumentRepository::where('ml_category', $category)
+        $routedSamples = DocumentRepository::where('ml_category', $category)
             ->whereNotNull('used_for_training_at')
             ->orderByDesc('used_for_training_at')
             ->limit(self::MAX_ROUTED_VOCABULARY_SAMPLES)

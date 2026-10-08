@@ -1,6 +1,5 @@
 Field Service Report
 
-Technician assigned: Angelica Bautista
 Date of service: October 9, 2026
 
 This report covers calibration check of the laboratory weighing scales.

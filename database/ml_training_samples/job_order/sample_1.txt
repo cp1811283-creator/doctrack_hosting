@@ -2,9 +2,11 @@ Company Job Order Form
 
 This Job Order is submitted for approval.
 
-Requested by: Christina Villa, on behalf of Engineering department.
+Requested by: Christina Villa.
 Date requested: October 5, 2026.
 
 Description of work: replacement of a cracked window pane in the reception area facing the parking lot, scheduled without disrupting regular working hours.
+
+Estimated Cost: PHP 1,200.00
 
 Approved By: _______________________________

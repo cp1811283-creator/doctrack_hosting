@@ -1,7 +1,7 @@
 Purchase Requisition Form
 
-This request is filed by the Finance department on October 6, 2026.
 Requested by: Louis Suan
+Date filed: October 5, 2026.
 
 Department: Finance
 Item description: replacement toner cartridges and a spare drum unit for the shared accounting printer on the second floor, which has been printing faint pages for a week.

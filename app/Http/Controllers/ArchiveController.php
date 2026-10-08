@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
 use App\Models\DocumentRepository;
+use App\Models\User;
 use App\Rules\ReliableMimeType;
 use App\Services\TextExtractionService;
 use App\Services\ValidationService;
@@ -25,7 +26,14 @@ use Illuminate\Support\Facades\Storage;
  *   - Approver sees only the approved documents they were assigned to during
  *     the approval process (any category, including Other), so every
  *     document they decided on stays retrievable after it is approved.
- *     Heads and staff follow the same rule. Category does not limit access.
+ *     Heads and staff follow the same rule. Category does not limit access
+ *     to a document they were actually assigned to — it only limits which
+ *     FOLDERS they see (see folderStats()/approverCategories()): a Staff
+ *     approver's one assigned category plus Other; a Head's every category
+ *     their department covers for Final Approval, plus Other. Both can
+ *     still only ever exist in practice because of a document they were
+ *     genuinely assigned to — see approverCategories()'s own docblock for
+ *     why this can never hide a real assignment.
  *   - Originator is NOT scoped by category at all — an originator can
  *     upload any kind of document (the ML classifier determines its
  *     category automatically per upload), so tying their account to one
@@ -54,14 +62,18 @@ class ArchiveController extends Controller
     {
         $user = $request->user();
 
-        // Staff approvers go straight to the flat results list of their
-        // assigned documents. Admin, Originator, and Head approvers see a
-        // folder grid first (Feature: browse by category), UNLESS they've
-        // already got a search/filter active — that's what "search
-        // everything from the folder screen" (below) transitions into.
+        // Every role sees a folder grid first (Feature: browse by
+        // category) — Staff approvers included now (Feature: their
+        // archive can include an "Other" document alongside their one
+        // real category, via originator-directed custom routing's
+        // unrestricted approver pick — see selectApprovers()'s 'unrelated'
+        // branch — so a flat list could no longer tell the two apart) —
+        // UNLESS a search/filter is already active, which is what
+        // "search everything from the folder screen" (below) transitions
+        // into.
         $hasActiveFilters = $request->filled('category') || $request->filled('keyword')
             || $request->filled('date_from') || $request->filled('date_to');
-        $showFolders = $this->browsesByFolder($user) && ! $hasActiveFilters;
+        $showFolders = ! $hasActiveFilters;
 
         if ($showFolders) {
             return view('archive.index', [
@@ -80,16 +92,6 @@ class ArchiveController extends Controller
             'restrictedCategory' => null,
             'isOwnSubmissionsView' => $isOwnSubmissionsView,
         ]);
-    }
-
-    /**
-     * Admin, Originator, and Head approvers can use the category folders
-     * and the category filter. Staff approvers cannot: their archive is
-     * always a flat list of the documents assigned to them.
-     */
-    private function browsesByFolder($user): bool
-    {
-        return ! $user->isApprover() || $user->isHead();
     }
 
     /**
@@ -128,15 +130,18 @@ class ArchiveController extends Controller
             $isOwnSubmissionsView = true;
         }
 
-        // Category filter is available to Admin (any category) and
-        // Originator (within their own submissions); Approver's category is
-        // fixed above and not user-selectable. self::OTHER_FOLDER is
+        // Category filter is available to every role now that every role
+        // has folders to pick one from. For an Approver this narrows
+        // further WITHIN their already-assignment-restricted results
+        // above (an AND, not a replacement) — never an escape hatch to
+        // see outside what they were assigned to, just picking a category their
+        // own assigned documents could already include. self::OTHER_FOLDER is
         // a pseudo-category, not a real one the classifier ever assigns —
         // see folderStats()'s docblock for why it has to be checked via
         // desired_routing rather than ml_category (the classifier is
         // closed-set, so ml_category is ALWAYS one of the real known
         // categories even for a document flagged this way).
-        if ($this->browsesByFolder($user) && $request->filled('category')) {
+        if ($request->filled('category')) {
             $category = $request->string('category');
             $category->toString() === self::OTHER_FOLDER
                 ? $query->where('desired_routing', 'unrelated')
@@ -194,7 +199,15 @@ class ArchiveController extends Controller
             $base->where('originator_id', $user->user_id);
         }
 
-        $folders = collect(ValidationService::knownCategories())->map(function ($category) use ($base) {
+        // Admin/Originator see every real category, unrestricted. An
+        // Approver only ever sees a folder for a category they could
+        // actually have an assigned document in — see User::
+        // eligibleCategories()'s own docblock for why that's always safe,
+        // never hiding a real assignment (also shared by Decision
+        // History's own category filter — same reasoning applies there).
+        $categories = $user->isApprover() ? $user->eligibleCategories() : ValidationService::knownCategories();
+
+        $folders = collect($categories)->map(function ($category) use ($base) {
             $categoryQuery = (clone $base)->where('ml_category', $category);
 
             return (object) [

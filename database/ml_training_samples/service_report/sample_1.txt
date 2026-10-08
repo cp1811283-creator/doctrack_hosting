@@ -1,6 +1,5 @@
 Field Service Report
 
-Technician assigned: Teresa Navarro
 Date of service: October 5, 2026
 
 This report covers maintenance check of the primary application server.

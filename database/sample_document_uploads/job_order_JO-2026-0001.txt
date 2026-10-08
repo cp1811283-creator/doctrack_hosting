@@ -1,11 +1,10 @@
 Company Job Order Form
 
-Requested by: Christina Villa, on behalf of the Engineering department.
+Requested by: Christina Villa.
 Date requested: October 5, 2026.
 
 Description of work: the staff pantry sink on the third floor has a slow drain that backs up during the lunch rush, leaving standing water and a smell. Please clear the trap and drain line, inspect the supply valves for leaks, and replace the damaged strainer. Confirm the drain runs freely with the faucet at full flow.
 
-Priority: Medium
-Target Completion: October 9, 2026
+Estimated Cost: PHP 1,200.00
 
 Approved By: _______________________________

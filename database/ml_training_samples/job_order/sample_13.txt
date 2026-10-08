@@ -2,9 +2,11 @@ Company Job Order Form
 
 This Job Order is submitted for approval.
 
-Requested by: Christina Villa, on behalf of Engineering department.
+Requested by: Christina Villa.
 Date requested: October 5, 2026.
 
 Description of work: diagnostic inspection of the HVAC compressor unit on the rooftop, which has been cycling on and off unusually.
+
+Estimated Cost: PHP 920.00
 
 Approved By: _______________________________

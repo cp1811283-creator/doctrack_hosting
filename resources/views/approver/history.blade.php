@@ -14,7 +14,14 @@
 
             <div>
                 <label class="block text-xs font-medium text-surface-700 mb-1">Category</label>
-                <select name="category" id="history-category" class="rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
+                {{-- pr-8: the native <select> arrow sits INSIDE the box,
+                     not in reserved space of its own — without extra
+                     right padding, a long enough label runs straight into
+                     it instead of stopping short (confirmed: "All
+                     Categories" collided with the arrow here while the
+                     shorter "All Decisions" below didn't, at the exact
+                     same classes). --}}
+                <select name="category" id="history-category" class="rounded-lg border-surface-300 text-sm pl-3 pr-8 py-2 focus:border-primary-500 focus:ring-primary-500">
                     <option value="">All Categories</option>
                     @foreach($categories as $c)
                         <option value="{{ $c }}" @selected(request('category') === $c)>{{ $c }}</option>
@@ -24,7 +31,7 @@
 
             <div>
                 <label class="block text-xs font-medium text-surface-700 mb-1">Decision</label>
-                <select name="decision" id="history-decision" class="rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
+                <select name="decision" id="history-decision" class="rounded-lg border-surface-300 text-sm pl-3 pr-8 py-2 focus:border-primary-500 focus:ring-primary-500">
                     <option value="">All Decisions</option>
                     <option value="approved" @selected(request('decision') === 'approved')>Approved</option>
                     <option value="rejected" @selected(request('decision') === 'rejected')>Rejected</option>

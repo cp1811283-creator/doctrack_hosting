@@ -1,6 +1,7 @@
 REQUEST FOR PURCHASE
 
 Department: Engineering
+Requested by: Louis Suan
 
 Item description and quantity: branded uniforms for the newly onboarded facilities staff, 18 sets requested.
 Budget: PHP 29,700.00.

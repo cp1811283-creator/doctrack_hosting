@@ -1,9 +1,10 @@
 JOB ORDER SLIP
 
-Department: Finance
-Requested For: Ricardo Villanueva
+Requested By: Christina Villa
 Date Requested: October 10, 2026
 
 Description of Work: repaving of a small section of the parking lot near the loading bay that has developed potholes. Please close out the ticket once the work has been verified complete.
+
+Budget: PHP 980.00
 
 Approved By: _______________________________

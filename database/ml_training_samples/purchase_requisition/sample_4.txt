@@ -1,6 +1,7 @@
 Requisition Slip
 
-Filed by: Louis Suan, Finance Department
+Filed by: Louis Suan
+Department: Finance
 Date: October 8, 2026
 
 Item Description: replacement toner cartridges for the second floor printers.

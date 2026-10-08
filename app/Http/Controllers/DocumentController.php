@@ -541,8 +541,10 @@ class DocumentController extends Controller
         // document is visible here — WorkflowService::ingest() only ever
         // leaves it there on a genuine dead end (validation or extraction
         // failure, see failExtraction()'s docblock), same as 'rejected'.
-        // Both are stuck states an originator needs a real way out of.
-        abort_unless(in_array($document->global_status, ['rejected', 'processing'], true), 409, 'Only a rejected or failed-validation document can be resubmitted.');
+        // A disputed auto-approval is a third stuck state — see
+        // DocumentRepository::isResubmittable()'s own docblock. All three
+        // are cases an originator needs a real way out of.
+        abort_unless($document->isResubmittable(), 409, 'Only a rejected, failed-validation, or disputed document can be resubmitted.');
 
         $validated = $request->validate([
             'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:20480'],
@@ -710,7 +712,7 @@ class DocumentController extends Controller
         // (ocr_text) IS the document going forward.
         if ($document->isRichDocx() && $request->query('format') === 'html') {
             $html = app(DocxRichContentService::class)
-                ->render(Storage::path($document->file_path))['html'];
+                ->renderStoredFile($document->file_path)['html'];
 
             return response($html, 200, [
                 'Content-Type' => 'text/html; charset=UTF-8',

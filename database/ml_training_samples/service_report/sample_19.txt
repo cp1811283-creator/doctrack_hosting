@@ -1,7 +1,6 @@
 MAINTENANCE SERVICE REPORT
 
 Date Serviced: October 5, 2026
-Technician: Bianca Fernandez
 
 Work performed: testing of the backup internet failover connection.
 

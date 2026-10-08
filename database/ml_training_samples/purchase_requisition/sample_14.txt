@@ -1,6 +1,7 @@
 Requisition Slip
 
-Filed by: Louis Suan, Finance Department
+Filed by: Louis Suan
+Department: Finance
 Date: October 6, 2026
 
 Item Description: a portable air conditioning unit for the server room as a temporary backup.

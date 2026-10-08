@@ -1,7 +1,7 @@
 PURCHASE REQUISITION REQUEST
 
 Department: Engineering
-Requestor: Arnel Domingo
+Requestor: Christina Villa
 Date: October 7, 2026
 
 Items requested: whiteboard markers, erasers, and flip chart pads for all meeting rooms (Qty: 1 lot).

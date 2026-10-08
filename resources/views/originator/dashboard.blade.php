@@ -43,13 +43,13 @@
                 class="w-full rounded-lg border-surface-300 text-sm pl-9 pr-3 py-2 focus:border-primary-500 focus:ring-primary-500">
         </div>
         <div class="flex flex-wrap items-center gap-3">
-            <select name="status" onchange="this.form.submit()" class="rounded-lg border-surface-300 text-xs px-3 py-2">
+            <select name="status" onchange="this.form.submit()" class="rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                 <option value="">All Statuses</option>
                 @foreach(['processing' => 'Processing', 'classified_validated' => 'Awaiting Approval', 'approved' => 'Approved', 'auto_approved' => 'Auto-Approved', 'rejected' => 'Rejected'] as $value => $label)
                     <option value="{{ $value }}" {{ request('status') === $value ? 'selected' : '' }}>{{ $label }}</option>
                 @endforeach
             </select>
-            <select name="category" onchange="this.form.submit()" class="rounded-lg border-surface-300 text-xs px-3 py-2">
+            <select name="category" onchange="this.form.submit()" class="rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                 <option value="">All Categories</option>
                 @foreach($categories as $c)
                     <option value="{{ $c }}" {{ request('category') === $c ? 'selected' : '' }}>{{ $c }}</option>

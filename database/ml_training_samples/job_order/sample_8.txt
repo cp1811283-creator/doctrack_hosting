@@ -1,9 +1,10 @@
 INTERNAL JOB ORDER REQUEST
 
-Finance department is requesting maintenance support.
 Requested by: Louis Suan
 Date requested: October 6, 2026
 
 Description of work needed: repair of a leaking pipe fitting under the second floor pantry sink that has caused minor water staining below. Prompt attention would be appreciated given its impact on daily operations.
+
+Cost Estimate: PHP 1,850.00
 
 Approved By: _______________________________

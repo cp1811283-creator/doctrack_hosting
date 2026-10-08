@@ -157,7 +157,21 @@
         let analyticsGranularity = overviewEl.querySelector('.analytics-panel-content')?.dataset.granularity || 'day';
         let analyticsAsOf = overviewEl.querySelector('.analytics-panel-content')?.dataset.asOf || null;
 
+        // Bug fix (2026-10-08): nothing stopped Day/Week/Month/Year being
+        // clicked faster than the previous fetch for this same panel had
+        // even landed — each click fired its own request with no
+        // debounce, which combined with this page's other background
+        // polling (see startLiveChannel/startLivePoll calls below) was
+        // enough to trip the shared 'polling' rate limit (30/min, see
+        // AppServiceProvider) from a handful of fast clicks alone. A
+        // click while a request is already in flight is simply ignored
+        // here rather than queued — the admin can always click again
+        // once the panel has actually updated.
+        let analyticsRequestInFlight = false;
+
         function loadAnalyticsPanel() {
+            if (analyticsRequestInFlight) return;
+
             const panelEl = overviewEl.querySelector('#analytics-panel');
             if (!panelEl) return;
 
@@ -165,8 +179,20 @@
             url.searchParams.set('granularity', analyticsGranularity);
             if (analyticsAsOf) url.searchParams.set('as_of', analyticsAsOf);
 
+            analyticsRequestInFlight = true;
+
             fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                .then((r) => r.text())
+                .then((r) => {
+                    // fetch() only rejects on a network failure, never on
+                    // a non-2xx status (a 429 from the rate limiter, a
+                    // 500, …) — unchecked, that response's raw body
+                    // (an exception page, a plain "Too Many Attempts")
+                    // used to land straight in the panel's innerHTML
+                    // below. Routed to the same friendly message the
+                    // network-failure .catch() already shows instead.
+                    if (!r.ok) throw new Error('Request failed: ' + r.status);
+                    return r.text();
+                })
                 .then((html) => {
                     panelEl.innerHTML = html;
                     // The Analytics card's height can change once the
@@ -177,8 +203,63 @@
                     sizeAlertColumn();
                     sizeRecentActivity();
                 })
-                .catch(() => {});
+                .catch(() => {
+                    panelEl.innerHTML = '<p class="text-sm text-rejected-700 p-4">Couldn\'t load this view — please try again.</p>';
+                })
+                .finally(() => { analyticsRequestInFlight = false; });
         }
+
+        // Feature: download the Analytics panel as a CSV. A plain
+        // server-rendered <a href> doesn't work here — the overview
+        // fragment this button lives in gets replaced wholesale on every
+        // live refresh (same reason the tab-click listener below is
+        // delegated, not bound directly), and that fragment's own $panel
+        // resets to today/Day on every such swap (see overview.blade.
+        // php's own comment on this). Reading analyticsGranularity/
+        // analyticsAsOf from THIS closure instead — the one thing that
+        // actually stays in sync with whatever the admin has selected,
+        // live refreshes included — is what keeps the download matching
+        // what's on screen. Exposed on window so the inline onclick=""
+        // on the (replaceable) button can still reach this closure's
+        // own state.
+        function downloadAnalyticsCsv() {
+            const panelEl = overviewEl.querySelector('#analytics-panel');
+            if (!panelEl) return;
+
+            const url = new URL(panelEl.dataset.downloadUrl, window.location.origin);
+            url.searchParams.set('granularity', analyticsGranularity);
+            if (analyticsAsOf) url.searchParams.set('as_of', analyticsAsOf);
+            window.location = url;
+        }
+        window.downloadAnalyticsCsv = downloadAnalyticsCsv;
+
+        // Feature: a title naming the exact span on the printed page,
+        // matching the one the CSV download gets (see AdminController::
+        // analyticsPanelData()'s own $title). __printClone() only ever
+        // clones whatever element it's handed, so the title is prepended
+        // onto a throwaway wrapper around a COPY of the live panel here,
+        // rather than needing a permanently-visible (and redundant, next
+        // to the Day/Week/Month/Year tabs' own context) heading on the
+        // panel itself. Read fresh from .analytics-panel-content's own
+        // data-title at click time — never cached in JS — so it's always
+        // whatever was last actually fetched, live refreshes included.
+        function printAnalyticsPanel() {
+            const panelEl = overviewEl.querySelector('#analytics-panel');
+            const contentEl = overviewEl.querySelector('.analytics-panel-content');
+            if (!panelEl) return;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = panelEl.className;
+            if (contentEl?.dataset.title) {
+                const heading = document.createElement('h2');
+                heading.style.cssText = 'font-size:16px;font-weight:600;margin:0 0 12px;';
+                heading.textContent = contentEl.dataset.title;
+                wrapper.appendChild(heading);
+            }
+            wrapper.appendChild(panelEl.cloneNode(true));
+            __printClone(wrapper);
+        }
+        window.printAnalyticsPanel = printAnalyticsPanel;
 
         // Tab clicks — delegated on the stable #admin-overview wrapper
         // rather than bound directly to the tab buttons, because those

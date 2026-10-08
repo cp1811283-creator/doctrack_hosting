@@ -1,6 +1,7 @@
 REQUEST FOR PURCHASE
 
 Department: Finance
+Requested by: Christina Villa
 
 Item description and quantity: a new office chair batch to replace units flagged during the facilities walkthrough, 14 units requested.
 Budget: PHP 84,000.00.

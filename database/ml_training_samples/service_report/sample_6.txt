@@ -1,7 +1,6 @@
 SERVICE COMPLETION REPORT
 
 Date of service rendered: October 10, 2026
-Technician on duty: Ferdinand Ilagan
 
 Summary of work: inspection of the parking structure's lighting system.
 Findings and recommendations: Approximately 15 percent of fixtures found non-functional; replacement bulbs installed and full system re-tested successfully.

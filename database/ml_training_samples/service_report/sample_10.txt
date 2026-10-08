@@ -1,7 +1,6 @@
 SERVICE COMPLETION REPORT
 
 Date of service rendered: October 8, 2026
-Technician on duty: Arnel Domingo
 
 Summary of work: inspection of the rooftop solar panel array.
 Findings and recommendations: Panels cleaned and output readings compared against baseline; two panels showing reduced output were marked for replacement.

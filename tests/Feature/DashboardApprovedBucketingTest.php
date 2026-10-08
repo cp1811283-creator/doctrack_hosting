@@ -71,15 +71,32 @@ test('a real human-approved document still counts as Approved', function () {
         ->and($stats['pending'])->toBe(0);
 });
 
-test('a disputed auto-approved document counts as In Progress, not Approved, even though it was reviewed', function () {
+test('a disputed auto-approved document counts as Disputed, not In Progress or Approved', function () {
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
     bucketingDoc($originator, autoApproved: true, reviewed: true, disputed: true);
 
     $stats = $this->actingAs($admin)->getJson(route('admin.dashboard.poll'))->json('stats');
 
+    expect($stats['pending'])->toBe(0)
+        ->and($stats['approved'])->toBe(0)
+        ->and($stats['disputed'])->toBe(1);
+});
+
+test('a disputed auto-approved document the Admin never reviewed is still In Progress, not Disputed yet', function () {
+    // disputed_at is only ever set together with admin_reviewed_at by
+    // reviewAutoApproval() — this covers the shape the code never
+    // actually produces (disputed_at set, admin_reviewed_at still null),
+    // so "In Progress" and "Disputed" never silently double-count the
+    // same document between them regardless of how disputed_at got set.
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    bucketingDoc($originator, autoApproved: true, reviewed: false, disputed: true);
+
+    $stats = $this->actingAs($admin)->getJson(route('admin.dashboard.poll'))->json('stats');
+
     expect($stats['pending'])->toBe(1)
-        ->and($stats['approved'])->toBe(0);
+        ->and($stats['disputed'])->toBe(1);
 });
 
 test('the Approved and In Progress drilldown lists agree with the KPI counts', function () {
@@ -96,4 +113,17 @@ test('the Approved and In Progress drilldown lists agree with the KPI counts', f
 
     $approvedList->assertOk()->assertSee($reviewed->title)->assertDontSee($unreviewed->title);
     $pendingList->assertOk()->assertSee($unreviewed->title)->assertDontSee($reviewed->title);
+});
+
+test('the Disputed drilldown list agrees with its KPI count and excludes it from In Progress/Approved', function () {
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    $disputed = bucketingDoc($originator, autoApproved: true, reviewed: true, disputed: true, title: 'disputed-doc.txt');
+    $settled = bucketingDoc($originator, autoApproved: true, reviewed: true, title: 'settled-doc.txt');
+
+    $stats = $this->actingAs($admin)->getJson(route('admin.dashboard.poll'))->json('stats');
+    $disputedList = $this->actingAs($admin)->get(route('admin.dashboard.drilldown', 'disputed'));
+
+    expect($stats['disputed'])->toBe(1);
+    $disputedList->assertOk()->assertSee($disputed->title)->assertDontSee($settled->title);
 });

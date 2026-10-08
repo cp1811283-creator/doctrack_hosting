@@ -4,6 +4,7 @@ use App\Models\DocumentAssignment;
 use App\Models\DocumentRepository;
 use App\Models\User;
 use App\Models\WorkflowStage;
+use App\Models\WorkflowStageDepartment;
 
 function archivedDocument(User $originator, string $category, array $overrides = []): DocumentRepository
 {
@@ -48,13 +49,31 @@ test('clicking into a category folder shows the scoped results view', function (
     $response->assertDontSee('service-report-doc.txt');
 });
 
-test('an approver never sees the folder grid, even with no filters — straight to their scoped results', function () {
+test('a staff approver sees the folder grid too (Feature: can have an Other document alongside their one real category)', function () {
     $approver = User::factory()->approver('Job Order')->create();
     $originator = User::factory()->originator()->create();
     $document = archivedDocument($originator, 'Job Order', ['title' => 'my-category-doc.txt']);
     assignApproverTo($approver, $document);
 
     $response = $this->actingAs($approver)->get(route('approver.archive'));
+
+    $response->assertOk();
+    $response->assertSee('Browse by Category');
+    // Only their one real category, plus Other — never a category they
+    // could never actually have an assigned document in.
+    $response->assertSee('Job Order');
+    $response->assertSee('Other');
+    $response->assertDontSee('Purchase Requisition');
+    $response->assertDontSee('Service Report');
+});
+
+test('clicking into a staff approver\'s own category folder shows their assigned documents', function () {
+    $approver = User::factory()->approver('Job Order')->create();
+    $originator = User::factory()->originator()->create();
+    $document = archivedDocument($originator, 'Job Order', ['title' => 'my-category-doc.txt']);
+    assignApproverTo($approver, $document);
+
+    $response = $this->actingAs($approver)->get(route('approver.archive', ['category' => 'Job Order']));
 
     $response->assertOk();
     $response->assertSee('Approved Documents');
@@ -69,7 +88,7 @@ test('an approver sees only approved documents they were assigned to, not every 
     archivedDocument($originator, 'Job Order', ['title' => 'unassigned-doc.txt']);
     assignApproverTo($approver, $assigned);
 
-    $response = $this->actingAs($approver)->get(route('approver.archive'));
+    $response = $this->actingAs($approver)->get(route('approver.archive', ['category' => 'Job Order']));
 
     $response->assertOk();
     $response->assertSee('assigned-doc.txt');
@@ -77,15 +96,47 @@ test('an approver sees only approved documents they were assigned to, not every 
 });
 
 test('an approver with no category still sees the documents assigned to them in the archive', function () {
-    $head = User::factory()->approver()->create(['assigned_category' => null]);
+    $head = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head', 'department' => 'Engineering']);
     $originator = User::factory()->originator()->create();
     $document = archivedDocument($originator, 'Service Report', ['title' => 'head-assigned-doc.txt']);
     assignApproverTo($head, $document);
 
-    $response = $this->actingAs($head)->get(route('approver.archive'));
+    $response = $this->actingAs($head)->get(route('approver.archive', ['category' => 'Service Report']));
 
     $response->assertOk();
     $response->assertSee('head-assigned-doc.txt');
+});
+
+test('a head only sees folders for categories their own department covers for Final Approval', function () {
+    // Mirrors the real seeder's own department ownership: Job Order's
+    // Final Approval needs both departments, Service Report Engineering
+    // only, Purchase Requisition Finance only (deliberately left
+    // unconfigured here) — see approverCategories()'s own docblock.
+    foreach ([['Job Order', 'Engineering'], ['Job Order', 'Finance'], ['Service Report', 'Engineering']] as [$category, $department]) {
+        $finalApproval = WorkflowStage::firstOrCreate(
+            ['document_category' => $category, 'stage_name' => 'Final Approval'],
+            ['sequence_order' => 99]
+        );
+        WorkflowStageDepartment::create(['stage_id' => $finalApproval->stage_id, 'department' => $department]);
+    }
+
+    $engineeringHead = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head', 'department' => 'Engineering']);
+    $originator = User::factory()->originator()->create();
+    $jobOrderDoc = archivedDocument($originator, 'Job Order', ['title' => 'eng-job-order.txt']);
+    $serviceDoc = archivedDocument($originator, 'Service Report', ['title' => 'eng-service-report.txt']);
+    assignApproverTo($engineeringHead, $jobOrderDoc);
+    assignApproverTo($engineeringHead, $serviceDoc);
+
+    $response = $this->actingAs($engineeringHead)->get(route('approver.archive'));
+
+    $response->assertOk();
+    $response->assertSee('Job Order');
+    $response->assertSee('Service Report');
+    $response->assertSee('Other');
+    // Purchase Requisition is Finance-only for Final Approval — an
+    // Engineering head can never actually have an assigned document
+    // there, so the folder doesn't bother appearing.
+    $response->assertDontSee('Purchase Requisition');
 });
 
 function assignApproverTo(User $approver, DocumentRepository $document): void
@@ -210,7 +261,12 @@ test('a head approver can open the Other folder and see assigned unrelated docum
     $response->assertSee('head-other-doc.txt');
 });
 
-test('a staff approver still sees a flat list with no folder grid and no category filter', function () {
+test('a staff approver browsing their own category filter never sees a document outside it, even with a category param mismatch', function () {
+    // Superseded the old "staff never sees folders" assumption (Feature:
+    // Staff approvers get folders too, see the tests near the top of
+    // this file) — what's still true is that a Staff approver's own
+    // assigned documents are scoped to the one category they're actually
+    // picked for, regardless of what ?category= is passed.
     $staff = User::factory()->approver('Job Order')->create();
     $originator = User::factory()->originator()->create();
     $document = archivedDocument($originator, 'Job Order', ['title' => 'staff-flat-doc.txt']);
@@ -218,7 +274,5 @@ test('a staff approver still sees a flat list with no folder grid and no categor
 
     $response = $this->actingAs($staff)->get(route('approver.archive', ['category' => 'Service Report']));
 
-    $response->assertOk();
-    $response->assertDontSee('Browse by Category');
-    $response->assertSee('staff-flat-doc.txt');
+    $response->assertOk()->assertDontSee('staff-flat-doc.txt');
 });

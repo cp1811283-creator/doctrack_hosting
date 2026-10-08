@@ -1,7 +1,6 @@
 SERVICE COMPLETION REPORT
 
 Date of service rendered: October 6, 2026
-Technician on duty: Nestor Villanueva
 
 Summary of work: testing of the emergency lighting and exit signage throughout the building.
 Findings and recommendations: All units passed the battery backup test; two exit signs replaced due to dim output.

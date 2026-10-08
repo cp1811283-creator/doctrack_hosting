@@ -28,6 +28,26 @@ class DocumentRepository extends Model
     }
 
     /**
+     * Whether the originator has a real way out of this document's current
+     * state by uploading a corrected version — shared by
+     * DocumentController::resubmit() (the actual gate) and the tracking
+     * page (whether to show the form at all), so the two can never
+     * disagree about when resubmission is allowed:
+     *   - 'rejected'/'processing' — a stuck validation/extraction failure
+     *     or an approval rejection, same as this always worked.
+     *   - a disputed auto-approval (Feature: a disputed auto-approval can
+     *     be resubmitted, same as a rejected document — see
+     *     AdminController::reviewAutoApproval()) — Admin flagged a real
+     *     problem with it, so the originator owes a correction here too,
+     *     not just on an outright rejection.
+     */
+    public function isResubmittable(): bool
+    {
+        return in_array($this->global_status, ['rejected', 'processing'], true)
+            || ($this->global_status === 'auto_approved' && $this->disputed_at !== null);
+    }
+
+    /**
      * Broadcasts DocumentStatusChanged over Reverb whenever global_status
      * OR disputed_at actually changes, from wherever it changes — a single
      * hook here instead of manually firing the event at every call site

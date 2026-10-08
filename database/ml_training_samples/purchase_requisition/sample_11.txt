@@ -1,6 +1,8 @@
 Purchase Requisition Form
 
-This request is filed by the Engineering department on October 9, 2026.
+Department: Engineering
+Filed by: Christina Villa
+Date: October 9, 2026.
 
 Item description: heavy-duty extension cords and power strips for the warehouse floor.
 Quantity requested: 20 units.

@@ -21,7 +21,7 @@
         <div class="flex flex-wrap items-end gap-3">
             <div>
                 <label class="block text-[11px] font-medium text-surface-500 mb-1">Category</label>
-                <select name="category" class="doc-tracking-auto-submit rounded-lg border-surface-300 text-xs px-3 py-2">
+                <select name="category" class="doc-tracking-auto-submit rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                     <option value="">All Categories</option>
                     @foreach($categories as $cat)
                         <option value="{{ $cat }}" {{ request('category') === $cat ? 'selected' : '' }}>{{ $cat }}</option>
@@ -30,7 +30,7 @@
             </div>
             <div>
                 <label class="block text-[11px] font-medium text-surface-500 mb-1">Status</label>
-                <select name="status" class="doc-tracking-auto-submit rounded-lg border-surface-300 text-xs px-3 py-2">
+                <select name="status" class="doc-tracking-auto-submit rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                     <option value="">All Statuses</option>
                     <option value="processing" {{ request('status') === 'processing' ? 'selected' : '' }}>Processing</option>
                     <option value="classified_validated" {{ request('status') === 'classified_validated' ? 'selected' : '' }}>In Progress</option>
@@ -41,7 +41,7 @@
             </div>
             <div>
                 <label class="block text-[11px] font-medium text-surface-500 mb-1">Originator</label>
-                <select name="originator_id" class="doc-tracking-auto-submit rounded-lg border-surface-300 text-xs px-3 py-2">
+                <select name="originator_id" class="doc-tracking-auto-submit rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                     <option value="">All Originators</option>
                     @foreach($originators as $originator)
                         <option value="{{ $originator->user_id }}" {{ (int) request('originator_id') === $originator->user_id ? 'selected' : '' }}>{{ $originator->full_name }}</option>

@@ -119,6 +119,32 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Which real categories this approver could ever have a genuine
+     * assigned document (or decision) in — Staff: their one
+     * assigned_category; Head: every category their own department
+     * covers for Final Approval (see the WorkflowStageDepartment rows
+     * WorkflowService::eligibleApproversForStage() reads). Shared by the
+     * Archive folder view (ArchiveController::folderStats()) and Decision
+     * History's category filter (ApprovalController::history()) so
+     * neither one ever offers a category this approver could never
+     * actually have a document in — never empty for a legitimate account,
+     * but intentionally returns [] rather than guessing for a Head with
+     * no department set.
+     */
+    public function eligibleCategories(): array
+    {
+        if ($this->isHead()) {
+            return WorkflowStage::configured()
+                ->where('stage_name', 'Final Approval')
+                ->whereHas('departments', fn ($q) => $q->where('department', $this->department))
+                ->pluck('document_category')
+                ->all();
+        }
+
+        return array_values(array_filter([$this->assigned_category]));
+    }
+
+    /**
      * The single source of truth for how a role reads everywhere in the
      * UI (header badge, chat, email, drilldowns) — matches the capstone
      * paper's own terminology and the "Staff (Originator)"/"Staff

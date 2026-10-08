@@ -6,6 +6,7 @@ use DOMDocument;
 use DOMElement;
 use DOMText;
 use DOMXPath;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use ZipArchive;
 
@@ -119,6 +120,61 @@ class DocxRichContentService
         $zip->close();
 
         return ['html' => $html, 'flat_text' => $flatText];
+    }
+
+    /**
+     * render()'s counterpart for a file that lives on the configured
+     * storage disk rather than already on local disk — every caller
+     * outside this class's own tests, since an uploaded document's
+     * file_path is a Storage path, not a filesystem path. ZipArchive
+     * (what render()/applyTextEdits() are built on) can only open a real
+     * local file, and Storage::path() — the obvious way to get one — only
+     * works for the 'local' disk driver; it throws outright on an
+     * S3-compatible disk like the Cloudflare R2 bucket this app uses in
+     * production (see railway/README.md). So the file is pulled down to a
+     * throwaway local temp copy first, read here, and the temp copy is
+     * always removed afterward, success or failure.
+     *
+     * @param  array<int, array{start_offset: int, end_offset: int, tooltip: string}>  $annotations
+     * @return array{html: string, flat_text: string}
+     */
+    public function renderStoredFile(string $storagePath, array $annotations = [], bool $tagSegments = false): array
+    {
+        $localCopy = $this->materializeLocalCopy($storagePath);
+        try {
+            return $this->render($localCopy, $annotations, $tagSegments);
+        } finally {
+            @unlink($localCopy);
+        }
+    }
+
+    /**
+     * applyTextEdits()'s counterpart for a file on the configured storage
+     * disk — see renderStoredFile()'s docblock for why ZipArchive needs a
+     * real local path. applyTextEdits() writes its change into the LOCAL
+     * copy in place, so that edited copy is uploaded back to the same
+     * storage path afterward — the actual document on disk/R2 has to end
+     * up with the edit, not just the throwaway temp file.
+     */
+    public function applyStoredTextEdits(string $storagePath, array $segmentTexts): string
+    {
+        $localCopy = $this->materializeLocalCopy($storagePath);
+        try {
+            $flatText = $this->applyTextEdits($localCopy, $segmentTexts);
+            Storage::put($storagePath, file_get_contents($localCopy));
+
+            return $flatText;
+        } finally {
+            @unlink($localCopy);
+        }
+    }
+
+    private function materializeLocalCopy(string $storagePath): string
+    {
+        $localPath = tempnam(sys_get_temp_dir(), 'docx_');
+        file_put_contents($localPath, Storage::get($storagePath));
+
+        return $localPath;
     }
 
     /**

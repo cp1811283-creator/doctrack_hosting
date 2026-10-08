@@ -170,14 +170,26 @@
 
         // Subscribed to the document's actual owner's channel, not the
         // current viewer's own id — for the originator viewing their own
-        // document these are the same person, but an Admin (or anyone else
-        // permitted onto this page) viewing someone ELSE's document has a
-        // different id from the owner, and the server only ever broadcasts
-        // document.status-changed on the owner's channel (see
-        // DocumentStatusChanged::broadcastOn()). Subscribing to the
-        // viewer's own id there would silently never receive anything,
-        // leaving that viewer stuck on the slow poll fallback only.
+        // document these are the same person, but an Admin viewing someone
+        // ELSE's document has a different id from the owner, and
+        // DocumentStatusChanged::broadcastOn() only ever puts an
+        // originator on their OWN 'originator.{id}' channel. Admin can
+        // never pass that channel's own auth check (routes/channels.php
+        // requires isOriginator()), so subscribing there for an Admin
+        // viewer would silently never receive anything.
         startLiveChannel(`originator.${contentEl.dataset.originatorId}`, '.document.status-changed', opts);
+        // Bug fix (2026-10-08): the event above is ALSO already broadcast
+        // on 'admin-dashboard' (same event, see DocumentStatusChanged::
+        // broadcastOn() — it was never originator-only), which Admin CAN
+        // subscribe to, same channel the Control Center itself already
+        // listens on. An Admin viewing this page was simply never
+        // listening on the one channel that was actually reaching them —
+        // this is what made this page look like it wasn't realtime for
+        // Admin specifically, stuck on the ~45-75s poll fallback below
+        // instead of the instant push every other viewer already got.
+        @if(auth()->user()->isAdmin())
+            startLiveChannel('admin-dashboard', '.document.status-changed', opts);
+        @endif
         startLivePoll({ ...opts, pollUrl: contentEl.dataset.pollUrl });
 
         // Heads-up only, not authoritative — same check as the main

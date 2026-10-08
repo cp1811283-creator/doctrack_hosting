@@ -1308,18 +1308,26 @@ class WorkflowService
      */
     /**
      * What to call the one-off stage routeToCustomApprovers() creates —
-     * the real stage(s) the picked approvers are actually tied to (the
-     * same info DocumentController::stagesLabelFor() already shows in the
-     * approver picker), not a generic placeholder. Approvers picked with
-     * no stage restriction of their own contribute nothing here (they're
-     * eligible for a category's whole pipeline, not one named stage), so
-     * this only ever falls back to "Direct Approval" when NONE of the
-     * picked approvers have a specific stage to point to.
+     * the real stage(s) the picked approvers are actually tied to, not a
+     * generic placeholder. A Head never has a specific stage pick of
+     * their own (see eligibleApproversForStage()'s docblock — they're
+     * eligible for Final Approval by LEVEL, not by being assigned to it,
+     * same reason they're never offered a stage checklist on the Create
+     * Account form), so that case is named directly rather than falling
+     * through to the fallback below, which used to wrongly catch it (a
+     * real reported bug: picking a Head showed "Direct Approval" instead
+     * of "Final Approval"). A Staff approver with no stage restriction of
+     * their own still contributes nothing here (they're eligible for a
+     * category's whole pipeline, not one named stage), so this only ever
+     * falls back to "Direct Approval" when NONE of the picked approvers
+     * have a specific stage to point to AND none of them are a Head.
      */
     private function deriveCustomStageName(Collection $approvers): string
     {
         $stageNames = $approvers
-            ->flatMap(fn (User $approver) => $approver->workflowStages()->pluck('stage_name'))
+            ->flatMap(fn (User $approver) => $approver->isHead()
+                ? collect(['Final Approval'])
+                : $approver->workflowStages()->pluck('stage_name'))
             ->unique()
             ->values();
 
@@ -1794,8 +1802,7 @@ class WorkflowService
         DB::transaction(function () use ($document, $originator, $segmentTexts, $resolvedAnnotationIds) {
             $previousText = $document->ocr_text;
 
-            $absolutePath = Storage::path($document->file_path);
-            $newText = $this->docxRichContent->applyTextEdits($absolutePath, $segmentTexts);
+            $newText = $this->docxRichContent->applyStoredTextEdits($document->file_path, $segmentTexts);
 
             $document->ocr_text = TextExtractionService::normalizeLineEndings($newText);
             $document->save();

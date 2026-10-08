@@ -49,7 +49,8 @@ test('routing_mode custom still classifies and validates normally, but waits for
     // (30 words) — these tests aren't about classification/validation
     // itself, just about what happens to routing once both succeed.
     $content = "Job Order No: JO-1\nDate Requested: today\nRequested By: someone\nDescription of Work: ".
-        str_repeat('fix the widget assembly line carefully and thoroughly ', 5);
+        str_repeat('fix the widget assembly line carefully and thoroughly ', 5)
+        ."\nEstimated Cost: PHP 3,500.00";
 
     $document = fakeClassifiedIngestWithRoutingMode('Job Order', 95, $content, 'custom');
 
@@ -208,6 +209,32 @@ test('the tracking page shows only the custom stage for a custom-routed document
         ->assertSee('Direct Approval')
         ->assertDontSee('Technical Review')
         ->assertDontSee('Final Approval');
+});
+
+test('custom-routing to a Head names the one-off stage Final Approval, not the generic Direct Approval fallback', function () {
+    // Regression coverage for a real reported bug: a Head never has a
+    // specific stage pick of their own (eligible by level, not by pick —
+    // see eligibleApproversForStage()'s docblock), so picking one used to
+    // fall through to the same "Direct Approval" fallback a Staff
+    // approver with no stage restriction gets — even though a Head only
+    // ever means Final Approval.
+    $originator = User::factory()->originator()->create();
+    $head = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head', 'department' => 'Engineering', 'full_name' => 'Head Approver']);
+
+    $document = DocumentRepository::create([
+        'originator_id' => $originator->user_id,
+        'title' => 'head-custom.txt', 'file_path' => 'documents/head-custom.txt', 'mime_type' => 'text/plain',
+        'ml_category' => 'Job Order', 'is_validated' => true, 'due_date' => now()->addDay(),
+        'global_status' => 'classified_validated', 'desired_routing' => 'custom',
+        'pending_custom_routing_at' => now(),
+    ]);
+
+    app(WorkflowService::class)->routeToCustomApprovers($document, [$head->user_id], $originator);
+
+    $routed = $this->actingAs($originator)->get(route('originator.documents.show', $document->fresh()));
+    $routed->assertOk()
+        ->assertSee('Final Approval')
+        ->assertDontSee('Direct Approval');
 });
 
 test('the estimated approval time for a custom-routed document reflects its real SLA deadline, not the bypassed pipeline', function () {

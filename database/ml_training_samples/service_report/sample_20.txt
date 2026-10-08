@@ -1,6 +1,5 @@
 Service Visit Summary
 
-Technician: Dominic Pascual
 Date of Service: October 6, 2026
 
 On this visit, Dominic Pascual performed inspection of the rooftop exhaust fans serving the kitchen area.

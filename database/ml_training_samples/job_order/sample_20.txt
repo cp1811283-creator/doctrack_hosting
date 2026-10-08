@@ -1,9 +1,10 @@
 INTERNAL JOB ORDER REQUEST
 
-Finance department is requesting maintenance support.
 Requested by: Louis Suan
 Date requested: October 6, 2026
 
 Description of work needed: replacement of the company delivery truck's worn tires and a full brake pad inspection before its next long haul. Prompt attention would be appreciated given its impact on daily operations.
+
+Cost Estimate: PHP 1,975.00
 
 Approved By: _______________________________

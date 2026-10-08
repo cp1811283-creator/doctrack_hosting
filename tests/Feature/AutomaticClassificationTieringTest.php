@@ -54,7 +54,8 @@ function tieringDoc(float $confidence, float $margin, string $content): array
 function tieringContent(): string
 {
     return "Job Order No: JO-1\nDate Requested: today\nRequested By: someone\nDescription of Work: "
-        .str_repeat('fix the widget assembly line carefully and thoroughly ', 5);
+        .str_repeat('fix the widget assembly line carefully and thoroughly ', 5)
+        ."\nEstimated Cost: PHP 3,500.00";
 }
 
 test('high confidence routes automatically and adds nothing ambiguous to the record, regardless of margin', function () {

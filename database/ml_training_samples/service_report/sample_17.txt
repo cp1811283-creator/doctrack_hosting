@@ -1,6 +1,5 @@
 Field Service Report
 
-Technician assigned: Jasmine Ocampo
 Date of service: October 9, 2026
 
 This report covers inspection of the data center's raised flooring and cable management.

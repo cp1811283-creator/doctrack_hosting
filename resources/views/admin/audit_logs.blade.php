@@ -21,7 +21,7 @@
         <div class="flex flex-wrap items-end gap-3">
             <div>
                 <label class="block text-[11px] font-medium text-surface-500 mb-1">Action</label>
-                <select name="action_type" class="audit-auto-submit rounded-lg border-surface-300 text-xs px-3 py-2">
+                <select name="action_type" class="audit-auto-submit rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                     <option value="">All Actions</option>
                     @foreach($actionTypes as $type => $label)
                         <option value="{{ $type }}" {{ request('action_type') === $type ? 'selected' : '' }}>{{ $label }}</option>
@@ -30,7 +30,7 @@
             </div>
             <div>
                 <label class="block text-[11px] font-medium text-surface-500 mb-1">Employees</label>
-                <select name="actor_id" class="audit-auto-submit rounded-lg border-surface-300 text-xs px-3 py-2">
+                <select name="actor_id" class="audit-auto-submit rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                     <option value="">All Employees</option>
                     @foreach($actors as $actor)
                         <option value="{{ $actor->user_id }}" {{ (int) request('actor_id') === $actor->user_id ? 'selected' : '' }}>{{ $actor->full_name }}</option>

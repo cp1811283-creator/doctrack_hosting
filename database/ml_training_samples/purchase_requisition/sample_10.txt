@@ -1,7 +1,7 @@
 PURCHASE REQUISITION REQUEST
 
 Department: Finance
-Requestor: Angelica Bautista
+Requestor: Louis Suan
 Date: October 8, 2026
 
 Items requested: bottled water dispensers for the pantry areas on floors 2 through 5 (Qty: 4 units).

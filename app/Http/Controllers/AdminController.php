@@ -33,6 +33,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminController extends Controller
 {
@@ -68,23 +69,28 @@ class AdminController extends Controller
                     });
             })->count(),
             'rejected' => DocumentRepository::where('global_status', 'rejected')->count(),
+            // A disputed auto-approval is its own outcome, not a flavor of
+            // "In Progress" — see awaitingAdminReview()'s docblock. It has
+            // its own card instead so it reads as the distinct, resolved-
+            // but-not-approved state it actually is, with its own color
+            // (matches the 'disputed' status badge — see status-badge.
+            // blade.php) rather than being buried inside the generic
+            // in-progress count with nothing to tell them apart.
+            'disputed' => $this->disputedDocuments()->count(),
             'active_users' => User::count(),
             'violations_count' => SlaViolation::count(),
         ];
     }
 
     /**
-     * An auto-approved document that still owes someone's attention, so
-     * the Control Center counts it as "In Progress", not "Approved," even
-     * though there's no approver left waiting on it:
-     *   - at least one auto-approved stage hasn't been reviewed yet, OR
-     *   - it WAS reviewed, but disputed — confirming isn't the only real
-     *     review outcome; a dispute means the Admin flagged a problem and
-     *     the originator still owes a resubmission, so it's no more
-     *     "done" than an unreviewed one (see AdminController::
-     *     reviewAutoApproval(), which sets admin_reviewed_at either way —
-     *     the outcome, not just whether a review happened, is what
-     *     decides this).
+     * An auto-approved stage still waiting on Admin's FIRST look — not
+     * yet confirmed or disputed. The Control Center counts this as
+     * "In Progress," not "Approved," since nobody has actually signed
+     * off on it yet. Once Admin reviews it, this is immediately false
+     * either way (admin_reviewed_at gets set for both outcomes, see
+     * reviewAutoApproval()) — a disputed document falls out of "In
+     * Progress" at that point, not into it; see disputedDocuments() for
+     * where it goes instead.
      * Shared by overviewStats() and dashboardDrilldown() so the KPI count
      * and its click-through list can never disagree about which
      * documents belong in which bucket.
@@ -92,10 +98,25 @@ class AdminController extends Controller
     private function awaitingAdminReview($query)
     {
         return $query->where('global_status', 'auto_approved')
-            ->where(function ($q) {
-                $q->whereNotNull('disputed_at')
-                    ->orWhereHas('assignments', fn ($a) => $a->awaitingAdminReview());
-            });
+            ->whereHas('assignments', fn ($a) => $a->awaitingAdminReview());
+    }
+
+    /**
+     * An auto-approved document Admin reviewed and flagged a problem
+     * with — confirming isn't the only real review outcome. A dispute
+     * means the originator still owes a resubmission (Feature: a
+     * disputed auto-approval can be resubmitted, same as a rejected
+     * document — see DocumentController::resubmit()), so it's its own
+     * card rather than folded into "In Progress" (nothing is actually
+     * progressing) or "Approved" (nobody actually signed off on it).
+     * It stays counted here even after it's been resubmitted — same as a
+     * rejected document stays counted as "Rejected" forever — since this
+     * is the permanent record of what happened to THIS version; the
+     * resubmission is a new document with its own fresh status.
+     */
+    private function disputedDocuments()
+    {
+        return DocumentRepository::where('global_status', 'auto_approved')->whereNotNull('disputed_at');
     }
 
     /**
@@ -192,21 +213,22 @@ class AdminController extends Controller
     }
 
     /**
-     * The parts of the Analytics card that are NOT the interactive
-     * chart panel: peak upload day/hour, category volume, and the current
-     * backlog — all all-time/live snapshots, deliberately not scoped to
-     * whatever Day/Week/Month/Year tab or date filter the admin currently
-     * has the chart panel set to (see analyticsPanelData() below), since
-     * "which categories are busiest overall" and "how much is in flight
-     * right now" are more useful as a constant reference point than
+     * The parts of the Analytics card that are NOT the interactive chart
+     * panel: category volume and the current backlog — all-time/live
+     * snapshots, deliberately not scoped to whatever Day/Week/Month/Year
+     * tab or date filter the admin currently has the chart panel set to
+     * (see analyticsPanelData() below), since "how much is in flight
+     * right now" is more useful as a constant reference point than
      * something that resets depending on the chart's current filter.
+     * Peak day/hour moved INTO the chart panel itself (see
+     * analyticsPeak() below) — unlike these two, "when things are
+     * busiest" only means something relative to a specific window, and
+     * sitting next to a title that names one window while secretly
+     * answering for all of history was actively misleading (a real
+     * reported bug).
      */
     private function analyticsSummary(): array
     {
-        $uploadDates = DocumentRepository::pluck('upload_date');
-        $peakDay = $uploadDates->countBy(fn ($d) => $d->format('l'))->sortDesc()->keys()->first();
-        $peakHour = $uploadDates->countBy(fn ($d) => (int) $d->format('G'))->sortDesc()->keys()->first();
-
         $categoryVolume = DocumentRepository::whereNotNull('ml_category')
             ->selectRaw('ml_category, count(*) as cnt')
             ->groupBy('ml_category')
@@ -216,11 +238,66 @@ class AdminController extends Controller
         $backlogCount = DocumentRepository::whereIn('global_status', ['processing', 'classified_validated'])->count();
 
         return [
-            'peak_day' => $peakDay,
-            'peak_hour' => $peakHour !== null ? sprintf('%02d:00–%02d:00', $peakHour, ($peakHour + 1) % 24) : null,
             'category_volume' => $categoryVolume,
             'backlog_count' => $backlogCount,
         ];
+    }
+
+    /**
+     * Which "peak" question actually makes sense at this granularity,
+     * scoped to the exact [$since, $until] window analyticsPanelData()
+     * already computed for the chart itself — not the whole-history
+     * snapshot analyticsSummary() used to show regardless of which tab
+     * was selected (see that method's own updated docblock):
+     *   - Day: a single calendar day has only one day of the week, so
+     *     only "peak hour" means anything.
+     *   - Week: 12 distinct real calendar days exist to compare, so both
+     *     "peak day" (of the week — e.g. "busiest on Thursdays") and
+     *     "peak hour" are meaningful.
+     *   - Month: across 12 months, a specific busiest calendar DATE is
+     *     more useful than a day-of-week pattern.
+     *   - Year: zoomed out to years, month is the natural grain.
+     *
+     * @return array<int, array{label: string, value: string}>
+     */
+    private function analyticsPeak(string $unit, Carbon $since, Carbon $until): array
+    {
+        $uploadDates = DocumentRepository::whereBetween('upload_date', [$since, $until])->pluck('upload_date');
+
+        if ($uploadDates->isEmpty()) {
+            return [];
+        }
+
+        $peakHour = fn () => [
+            'label' => 'Peak upload hour',
+            'value' => $this->formatHourRange12($uploadDates->countBy(fn ($d) => (int) $d->format('G'))->sortDesc()->keys()->first()),
+        ];
+
+        return match ($unit) {
+            'hour' => [$peakHour()],
+            'week' => [
+                ['label' => 'Peak upload day', 'value' => $uploadDates->countBy(fn ($d) => $d->format('l'))->sortDesc()->keys()->first()],
+                $peakHour(),
+            ],
+            'month' => [['label' => 'Peak upload date', 'value' => $uploadDates->countBy(fn ($d) => $d->format('M j, Y'))->sortDesc()->keys()->first()]],
+            'year' => [['label' => 'Peak upload month', 'value' => $uploadDates->countBy(fn ($d) => $d->format('F Y'))->sortDesc()->keys()->first()]],
+            default => [],
+        };
+    }
+
+    /**
+     * 12-hour format (Feature: was 24-hour "16:00–17:00", now
+     * "4:00–5:00 PM") — $hour is 0-23, the start of the hour block;
+     * ($hour + 1) % 24 wraps 23 back to 0 (midnight) rather than 24,
+     * which Carbon would otherwise read as the NEXT day entirely.
+     */
+    private function formatHourRange12(?int $hour): ?string
+    {
+        if ($hour === null) {
+            return null;
+        }
+
+        return Carbon::createFromTime($hour, 0)->format('g:i A').'–'.Carbon::createFromTime(($hour + 1) % 24, 0)->format('g:i A');
     }
 
     /**
@@ -338,11 +415,26 @@ class AdminController extends Controller
             }
         }
 
+        // Shown as the heading on both the CSV download and the printed
+        // page (Feature: both need to say exactly what span they cover —
+        // see analyticsPanelDownload() and overview.blade.php's print
+        // button) — built from $since/$until, the same window
+        // analyticsBuckets() above was actually queried with, so this can
+        // never drift from what the data underneath it actually covers.
+        $title = 'Analytics for '.match ($cfg['unit']) {
+            'hour' => $asOf->format('F j, Y'),
+            'week' => $since->format('M j, Y').' – '.$until->format('M j, Y'),
+            'month' => $since->format('M Y').' – '.$until->format('M Y'),
+            'year' => $since->format('Y').' – '.$until->format('Y'),
+        };
+
         return [
             'granularity' => $granularity,
             'label' => $cfg['label'],
             'trend_label' => $cfg['trend_label'],
             'as_of' => $asOf->toDateString(),
+            'title' => $title,
+            'peak' => $this->analyticsPeak($cfg['unit'], $since, $until),
             'chart_rows' => $chartRows,
             'kpi' => $this->analyticsKpis($current, $previous),
         ];
@@ -635,6 +727,45 @@ class AdminController extends Controller
     }
 
     /**
+     * Feature: download the Analytics panel as a CSV — exactly the rows
+     * currently expanded under "View detailed breakdown" in analytics-
+     * panel.blade.php (same $activeRows filter: periods with genuinely
+     * nothing in them are skipped, same reasoning as that view's own
+     * docblock), for whichever granularity/date the admin currently has
+     * selected. Raw numbers, not the view's formatted strings (e.g.
+     * avg_minutes as a plain integer, not "2h 15m") — a spreadsheet is
+     * for further calculation, which a pre-formatted human string works
+     * against rather than for.
+     */
+    public function analyticsPanelDownload(Request $request): StreamedResponse
+    {
+        [$granularity, $asOf] = $this->analyticsPanelRequestArgs($request);
+        $panel = $this->analyticsPanelData($granularity, $asOf);
+
+        $filename = "doctrack-analytics-{$panel['granularity']}-{$panel['as_of']}.csv";
+
+        // Bug fix (2026-10-08): this used to only include a period that
+        // had SOME activity in it, the same filter the on-screen detail
+        // table applies for its own, different reason (hiding visual
+        // noise). For a download, that filter instead made a genuinely
+        // quiet window — the Day tab on a day nothing happened, say —
+        // come back as a file with only a header row, indistinguishable
+        // from the download being broken. Every period in the selected
+        // span is included now, zero-activity ones included, so an empty-
+        // looking result is honestly an empty-looking result, not a
+        // guessing game about whether something failed.
+        return response()->streamDownload(function () use ($panel) {
+            $out = fopen('php://output', 'w');
+            fputcsv($out, [$panel['title']]);
+            fputcsv($out, [$panel['label'], 'Uploaded', 'Approved', 'Rejected', 'Auto-Approved', 'Avg Minutes to Decide', 'SLA Violations']);
+            foreach ($panel['chart_rows'] as $row) {
+                fputcsv($out, [$row->bucket, $row->uploaded, $row->approved, $row->rejected, $row->auto_approved, $row->avg_minutes, $row->violations]);
+            }
+            fclose($out);
+        }, $filename, ['Content-Type' => 'text/csv']);
+    }
+
+    /**
      * Fragment listing the documents/users behind a clicked KPI card
      * (Feature: clickable dashboard cards) — reuses the exact same
      * global_status groupings as overviewData()'s stats, so the list
@@ -647,6 +778,7 @@ class AdminController extends Controller
             'pending' => 'In Progress',
             'approved' => 'Approved',
             'rejected' => 'Rejected',
+            'disputed' => 'Disputed',
             'users' => 'All Users',
             'ml_model' => 'Active ML Model',
         ];
@@ -715,6 +847,7 @@ class AdminController extends Controller
                     });
             }),
             'rejected' => $query->where('global_status', 'rejected'),
+            'disputed' => $query->where('global_status', 'auto_approved')->whereNotNull('disputed_at'),
             default => null, // 'total' — no filter
         };
 

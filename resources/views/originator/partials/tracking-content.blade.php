@@ -70,8 +70,16 @@
                              marker that this document skipped the standard
                              pipeline in favor of hand-picked approver(s), kept
                              after routing completes (see WorkflowService::
-                             routeToCustomApprovers()). --}}
-                        @if($document->custom_routed)
+                             routeToCustomApprovers()). custom_routed alone
+                             can't tell option 2 ("choose the approver(s)
+                             yourself" — still a real matched category) apart
+                             from option 3 ("doesn't belong to any of our
+                             categories") — both set it the same way, so the
+                             badge has to branch on desired_routing instead,
+                             the field that actually distinguishes the two. --}}
+                        @if($document->custom_routed && $document->desired_routing === 'unrelated')
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700" title="Flagged as not belonging to any trained category, then routed directly to hand-picked approver(s)">Other &middot; Custom Routed</span>
+                        @elseif($document->custom_routed)
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700" title="Routed directly to hand-picked approver(s) instead of the standard pipeline">Custom Routed</span>
                         @endif
                         {{-- Feature: Revision History (Google-Docs-style —
@@ -108,6 +116,18 @@
                         <p class="text-sm text-rejected-700 mt-1">
                             This upload could not be accepted — it failed an automatic security scan and was blocked before reaching any reviewer.
                             If you believe this is a mistake, resubmit a corrected version below.
+                        </p>
+                    @endif
+                    {{-- $disputeNote: the Admin's own note from whichever
+                         auto-approved stage they disputed (admin_review_note
+                         on the assignment, see AdminController::
+                         reviewAutoApproval()) — shown so the originator
+                         knows WHAT to fix, not just that something's wrong. --}}
+                    @if($document->display_status === 'disputed' && !$document->nextVersion)
+                        @php $disputeNote = $document->assignments->firstWhere('admin_review_outcome', 'disputed')?->admin_review_note; @endphp
+                        <p class="text-sm text-processing-700 mt-1">
+                            This was auto-approved, but an Admin disputed it{{ $disputeNote ? ': "'.$disputeNote.'"' : '' }}.
+                            Please resubmit a corrected version below.
                         </p>
                     @endif
                     @if($document->pending_custom_routing_at && auth()->user()->isOriginator())
@@ -184,11 +204,22 @@
 
             <x-lifecycle-stepper :document="$document" />
 
-            {{-- 'processing' here is never still-in-progress (see
-                 DocumentController::resubmit()'s matching comment) — it's
-                 a stuck validation/extraction failure, same as 'rejected',
-                 and needs the same way out. --}}
-            @if(in_array($document->global_status, ['rejected', 'processing'], true) && !$document->nextVersion)
+            {{-- See DocumentRepository::isResubmittable()'s docblock for
+                 the three stuck states this covers (rejected, a failed
+                 validation/extraction, or a disputed auto-approval) —
+                 shared with DocumentController::resubmit()'s own gate so
+                 the button is never shown somewhere the submit would
+                 actually be rejected, or hidden somewhere it would work.
+                 Bug fix (2026-10-08): that gate alone isn't enough — it
+                 only checks the DOCUMENT's state, never who's looking at
+                 it. Resubmitting is owner-only (see
+                 DocumentRepositoryPolicy::resubmit()), but Admin can also
+                 view this same tracker (viewTracking() allows it), so
+                 Admin was seeing a working-looking form that would be
+                 rejected (403) the moment they actually tried to use it.
+                 This form is this document's own originator's action, not
+                 a moderation tool — shown only to them. --}}
+            @if($document->isResubmittable() && !$document->nextVersion && auth()->id() === $document->originator_id)
                 <div class="mt-6 pt-6 border-t border-surface-200">
                     <details class="text-sm">
                         {{-- bg + padding, not just colored underlined text —
@@ -345,8 +376,8 @@
                                 <label class="block text-sm font-medium text-surface-700 mb-1">Document text</label>
                                 <div id="docx-revision-editor" contenteditable="true"
                                     class="w-full rounded-lg border border-surface-300 text-sm px-3 py-2 leading-relaxed max-h-96 overflow-y-auto bg-white"
-                                    style="white-space: pre-wrap;">{!! app(\App\Services\DocxRichContentService::class)->render(
-                                        \Illuminate\Support\Facades\Storage::path($document->file_path), [], true
+                                    style="white-space: pre-wrap;">{!! app(\App\Services\DocxRichContentService::class)->renderStoredFile(
+                                        $document->file_path, [], true
                                     )['html'] !!}</div>
                             </div>
                             {{-- Starts disabled — see the delegated listener in

@@ -1,7 +1,6 @@
 Field Service Report
 
-Technician assigned: Christina Villa
-Date of service: October 7, 2026
+Date of service: October 5, 2026
 
 This report covers the scheduled inspection and servicing of the main electrical panel in the ground-floor utility room.
 

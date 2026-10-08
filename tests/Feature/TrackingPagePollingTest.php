@@ -112,6 +112,26 @@ it('reports the current status and assignment states via trackingPoll', function
     $response->assertOk()->assertJson(['status' => 'classified_validated']);
 });
 
+it('subscribes an Admin viewer to admin-dashboard, so the tracker is instant for them too, not poll-only', function () {
+    // Regression coverage: DocumentStatusChanged was always broadcast on
+    // 'admin-dashboard' (see the first test in this file), but the
+    // tracking page's own script only ever subscribed to
+    // 'originator.{ownerId}' — a channel Admin can never pass the auth
+    // check for (routes/channels.php requires isOriginator()). An Admin
+    // viewing someone else's document was silently stuck on the ~45-75s
+    // poll fallback only, with no visible error, which is what made this
+    // page read as "not realtime" for Admin specifically.
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    $document = trackedDocument($originator);
+
+    $asAdmin = $this->actingAs($admin)->get(route('documents.track', $document));
+    $asOriginator = $this->actingAs($originator)->get(route('documents.track', $document));
+
+    $asAdmin->assertOk()->assertSee("startLiveChannel('admin-dashboard', '.document.status-changed', opts);", false);
+    $asOriginator->assertOk()->assertDontSee("startLiveChannel('admin-dashboard', '.document.status-changed', opts);", false);
+});
+
 it('rejects tracking poll/refresh for a document that is not the requester\'s own', function () {
     $owner = User::factory()->originator()->create();
     $someoneElse = User::factory()->originator()->create();

@@ -2,9 +2,11 @@ Company Job Order Form
 
 This Job Order is submitted for approval.
 
-Requested by: Christina Villa, on behalf of Engineering department.
+Requested by: Christina Villa.
 Date requested: October 5, 2026.
 
 Description of work: inspection and re-sealing of the roof membrane above the IT server room after a minor leak was noticed.
+
+Estimated Budget: PHP 7,200.00
 
 Approved By: _______________________________

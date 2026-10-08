@@ -4,7 +4,6 @@ use App\Models\DocumentRepository;
 use App\Models\SlaViolation;
 use App\Models\User;
 use Carbon\Carbon;
-use Illuminate\Support\Str;
 
 /**
  * upload_date is deliberately NOT mass-assignable on DocumentRepository
@@ -61,7 +60,6 @@ it('renders the redesigned Analytics panel with real KPI/category/backlog data',
     $response->assertSee('Auto-Approval Rate');
     $response->assertSee('SLA Violation Rate');
     $response->assertSee('Currently in progress');
-    $response->assertSee('View detailed breakdown');
 });
 
 it('serves the analytics panel fragment via AJAX for a given granularity and date', function () {
@@ -250,7 +248,15 @@ it('excludes auto-approved documents from Avg. Time to Decide, since that gap is
     expect(trim($matches[1]))->toBe('10m');
 });
 
-it('drops all-zero periods from the detail table while the chart itself still plots every period', function () {
+it('still plots every period on the chart itself, all-zero ones included', function () {
+    // Feature: "View detailed breakdown" (the table this test originally
+    // covered, which dropped all-zero rows) was removed from the panel —
+    // see analytics-panel.blade.php. The CSV download is the detailed
+    // view now, and it deliberately does the OPPOSITE (every period,
+    // zero-activity ones included — see AnalyticsPanelDownloadTest.php's
+    // own regression coverage for why). This test is narrowed to what's
+    // still true: the chart's own data still zero-fills every period for
+    // a continuous line, never silently dropping one.
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
@@ -264,16 +270,9 @@ it('drops all-zero periods from the detail table while the chart itself still pl
     ], now()->copy()->setTime(9, 0));
 
     $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
-    $response->assertOk();
 
-    // The chart's underlying data still has all 24 hours (zero-fill for
-    // the continuous line) — 3 AM, an all-zero hour, must still appear
-    // there (embedded in the SVG's data-points payload).
-    $response->assertSee('3:00 AM');
-
-    // But the detail table specifically must NOT render a row for that
-    // same silent hour — only the row(s) with real activity.
-    $tableSection = Str::after($response->getContent(), 'View detailed breakdown');
-    expect($tableSection)->not->toContain('3:00 AM')
-        ->and($tableSection)->toContain('9:00 AM');
+    // The chart's underlying data has all 24 hours (zero-fill for the
+    // continuous line) — 3 AM, an all-zero hour, must still appear there
+    // (embedded in the SVG's data-points payload).
+    $response->assertOk()->assertSee('3:00 AM');
 });

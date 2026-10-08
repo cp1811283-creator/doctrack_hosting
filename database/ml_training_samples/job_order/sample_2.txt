@@ -1,9 +1,10 @@
 INTERNAL JOB ORDER REQUEST
 
-Finance department is requesting maintenance support.
 Requested by: Louis Suan
 Date requested: October 6, 2026
 
 Description of work needed: servicing of the backup generator to ensure it starts reliably during the scheduled monthly test, reported more than once already. Prompt attention would be appreciated given its impact on daily operations.
+
+Budget: PHP 2,500.00
 
 Approved By: _______________________________

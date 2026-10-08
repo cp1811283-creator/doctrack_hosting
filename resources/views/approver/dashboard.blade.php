@@ -14,7 +14,7 @@
                     placeholder="Search document" autocomplete="off"
                     class="w-full rounded-lg border-surface-300 text-sm pl-9 pr-3 py-2 focus:border-primary-500 focus:ring-primary-500">
             </div>
-            <select name="priority" onchange="this.form.submit()" class="rounded-lg border-surface-300 text-xs px-3 py-2">
+            <select name="priority" onchange="this.form.submit()" class="rounded-lg border-surface-300 text-xs pl-3 pr-8 py-2">
                 <option value="">All Priorities</option>
                 @foreach(['Urgent', 'Normal', 'Low', 'Expired'] as $p)
                     <option value="{{ $p }}" {{ request('priority') === $p ? 'selected' : '' }}>{{ $p }}</option>

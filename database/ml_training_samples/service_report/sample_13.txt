@@ -1,6 +1,5 @@
 Field Service Report
 
-Technician assigned: Vinz Lessur
 Date of service: October 5, 2026
 
 This report covers air quality assessment of the printing and reprographics room.

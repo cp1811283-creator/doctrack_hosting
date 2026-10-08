@@ -1,6 +1,5 @@
 Field Service Report
 
-Technician assigned: Lourdes Gatchalian
 Date of service: October 7, 2026
 
 This report covers annual pest control treatment of the warehouse storage area.

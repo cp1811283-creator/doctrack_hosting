@@ -1,29 +1,18 @@
 {{--
-    The ONE reusable Analytics chart panel — KPI tiles + line chart +
-    detail table for whichever single granularity/date combination the
-    admin currently has selected. Rendered two ways: inline on the full
-    dashboard load (AdminController::dashboard()) and as a fragment
-    returned by analyticsPanelRefresh() for the Day/Week/Month/Year tabs
-    and the date filter to swap in place — same template either way, so
-    there's exactly one implementation, never a per-tab copy.
+    The ONE reusable Analytics chart panel — KPI tiles + line chart for
+    whichever single granularity/date combination the admin currently has
+    selected. Rendered two ways: inline on the full dashboard load
+    (AdminController::dashboard()) and as a fragment returned by
+    analyticsPanelRefresh() for the Day/Week/Month/Year tabs and the date
+    filter to swap in place — same template either way, so there's
+    exactly one implementation, never a per-tab copy.
 
-    Expects: $panel = ['granularity', 'label', 'as_of', 'chart_rows', 'kpi'].
+    Expects: $panel = ['granularity', 'label', 'as_of', 'title', 'peak', 'chart_rows', 'kpi'].
 --}}
 @php
     $chartRows = $panel['chart_rows'];
     $kpi = $panel['kpi'];
     $label = $panel['label'];
-
-    $rows = array_reverse($chartRows);
-    $maxUploaded = collect($rows)->max('uploaded') ?: 1;
-
-    // The chart above keeps every period, zero-activity ones included —
-    // that's what makes the line read as a continuous trend instead of
-    // jumping between the only active periods. The detail table underneath
-    // is a different job (exact numbers for periods that actually had
-    // something happen), so it drops rows where nothing did — otherwise a
-    // quiet 24-hour Day view is mostly identical all-zero rows.
-    $activeRows = array_values(array_filter($rows, fn ($row) => $row->uploaded > 0 || $row->approved > 0 || $row->rejected > 0 || $row->violations > 0));
 
     // Fixed internal coordinate space (not real pixels) — paired with
     // preserveAspectRatio="none" and width="100%" on the <svg> below, this
@@ -149,7 +138,24 @@
     ];
 @endphp
 {{-- No id here — the persistent id lives on the wrapper in overview.blade.php that never gets replaced; this root is the swap payload itself, identified instead by its data attributes so the dashboard script can read back the state it just rendered. --}}
-<div class="analytics-panel-content" data-granularity="{{ $panel['granularity'] }}" data-as-of="{{ $panel['as_of'] }}">
+{{-- data-title: read by printAnalyticsPanel() in dashboard.blade.php at
+     print-click time — see that function's own docblock for why it's
+     read fresh from here rather than tracked separately in JS. --}}
+<div class="analytics-panel-content" data-granularity="{{ $panel['granularity'] }}" data-as-of="{{ $panel['as_of'] }}" data-title="{{ $panel['title'] }}">
+    {{-- Which "peak" question is shown depends on the tab — see
+         AdminController::analyticsPeak()'s own docblock for why Day only
+         gets an hour, Week gets both a day and an hour, Month gets a
+         specific date, and Year gets a month. Omitted entirely (not a
+         "—" placeholder) when this window has no uploads at all, same
+         reasoning as the chart's own "No data yet" message below. --}}
+    @if(!empty($panel['peak']))
+        <div class="px-5 pt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-surface-500">
+            @foreach($panel['peak'] as $peak)
+                <span>{{ $peak['label'] }}: <span class="font-semibold text-surface-700">{{ $peak['value'] }}</span></span>
+            @endforeach
+        </div>
+    @endif
+
     {{-- KPI tiles: this period's headline numbers, with a % trend against
          the immediately preceding period — the scannable summary a chart
          alone can't give you at a glance. --}}
@@ -314,51 +320,4 @@
             <p class="text-xs text-surface-400 py-6 text-center">No data yet for this range.</p>
         @endif
     </div>
-    <div class="h-2"></div>
-
-    {{-- Demoted behind a toggle — the KPI tiles + chart above already
-         answer "how are things going," this is only for someone who wants
-         the exact per-period numbers. --}}
-    <details class="border-t border-surface-100">
-        <summary class="px-5 py-2.5 text-xs font-medium text-primary-700 cursor-pointer hover:bg-surface-50 select-none">View detailed breakdown</summary>
-        <div class="overflow-x-auto overflow-y-auto max-h-44 border-t border-surface-100">
-            <table class="w-full text-xs">
-                <thead class="bg-surface-50 text-surface-500 uppercase tracking-wide sticky top-0">
-                    <tr>
-                        <th class="text-left px-6 py-2 font-medium">{{ $label }}</th>
-                        <th class="text-left px-4 py-2 font-medium">Uploaded</th>
-                        <th class="text-left px-4 py-2 font-medium">Approved</th>
-                        <th class="text-left px-4 py-2 font-medium">Rejected</th>
-                        <th class="text-left px-4 py-2 font-medium">Auto vs Human</th>
-                        <th class="text-left px-4 py-2 font-medium">Avg. Time to Decide</th>
-                        <th class="text-left px-4 py-2 font-medium">SLA Violations</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-surface-100">
-                    @forelse($activeRows as $row)
-                        @php
-                            $decidedTotal = $row->approved + $row->rejected;
-                            $autoPct = $decidedTotal > 0 ? round($row->auto_approved / $decidedTotal * 100) : null;
-                        @endphp
-                        <tr>
-                            <td class="px-6 py-2 font-medium text-surface-700 whitespace-nowrap">{{ $row->bucket }}</td>
-                            <td class="px-4 py-2">
-                                <div class="flex items-center gap-2">
-                                    <div class="w-16 h-1.5 bg-surface-100 rounded-full overflow-hidden shrink-0"><div class="h-full bg-primary-500" style="width: {{ ($row->uploaded / $maxUploaded) * 100 }}%"></div></div>
-                                    <span class="tabular-nums">{{ $row->uploaded }}</span>
-                                </div>
-                            </td>
-                            <td class="px-4 py-2 text-approved-700 font-medium tabular-nums">{{ $row->approved }}</td>
-                            <td class="px-4 py-2 text-rejected-700 font-medium tabular-nums">{{ $row->rejected }}</td>
-                            <td class="px-4 py-2 text-surface-500">{{ $autoPct !== null ? "{$autoPct}% auto" : '—' }}</td>
-                            <td class="px-4 py-2 text-surface-500">{{ $row->avg_minutes !== null ? \Carbon\CarbonInterval::minutes($row->avg_minutes)->cascade()->forHumans(['short' => true]) : '—' }}</td>
-                            <td class="px-4 py-2 {{ $row->violations > 0 ? 'text-rejected-700 font-medium' : 'text-surface-400' }}">{{ $row->violations }}</td>
-                        </tr>
-                    @empty
-                        <tr><td colspan="7" class="px-6 py-6 text-center text-surface-400">No data yet for this range.</td></tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
-    </details>
 </div>

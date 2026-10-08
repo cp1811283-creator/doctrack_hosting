@@ -1,6 +1,8 @@
 Purchase Requisition Form
 
-This request is filed by the Finance department on October 10, 2026.
+Department: Finance
+Filed by: Louis Suan
+Date: October 10, 2026.
 
 Item description: stackable filing cabinets for the archive room expansion.
 Quantity requested: 6 units.

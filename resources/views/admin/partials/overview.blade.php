@@ -10,12 +10,18 @@
     AdminController::overviewRefresh() for the live-poll JS to swap in
     place (see dashboard.blade.php) without a full page reload.
 --}}
-<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
     @foreach([
         ['Total Documents', $stats['total_documents'], 'text-surface-900', 'bg-surface-100 text-surface-600', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', 'total', 'All documents ever submitted to the system, regardless of status.'],
-        ['In Progress', $stats['pending'], 'text-processing-700', 'bg-processing-50 text-processing-600', 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', 'pending', 'Still being classified or validated, or auto-approved but still awaiting your review.'],
+        ['In Progress', $stats['pending'], 'text-processing-700', 'bg-processing-50 text-processing-600', 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z', 'pending', 'Still being classified or validated, or auto-approved and awaiting your first review.'],
         ['Approved', $stats['approved'], 'text-approved-700', 'bg-approved-50 text-approved-600', 'M9 12.75 11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z', 'approved', 'Fully settled — approved by a person, or auto-approved and already reviewed by you.'],
         ['Rejected', $stats['rejected'], 'text-rejected-700', 'bg-rejected-50 text-rejected-600', 'M6 18L18 6M6 6l12 12', 'rejected', 'Rejected during validation or by an approver.'],
+        {{-- Same color family as the 'disputed' status badge (status-
+             badge.blade.php) and the archive's own Disputed tag — not a
+             new color, so it reads as the same thing everywhere it
+             appears. A different icon (flag, vs. In Progress' clock)
+             keeps the two tellable apart without relying on color alone. --}}
+        ['Disputed', $stats['disputed'], 'text-processing-700', 'bg-processing-50 text-processing-600', 'M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5', 'disputed', 'Auto-approved, then flagged by you as a problem — the originator still owes a corrected resubmission.'],
         ['All Users', $stats['active_users'], 'text-primary-700', 'bg-primary-50 text-primary-600', 'M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-8a4 4 0 11-8 0 4 4 0 018 0zm6 3a4 4 0 11-8 0 4 4 0 018 0z', 'users', 'Every account in the system — active and deactivated alike.'],
     ] as [$label, $value, $color, $iconClasses, $iconPath, $type, $description])
         <button type="button"
@@ -71,16 +77,46 @@
                             </button>
                         @endforeach
                     </div>
+                    {{-- Both act on whatever Day/Week/Month/Year + date is
+                         CURRENTLY selected, and both are <button>s calling
+                         a function in dashboard.blade.php rather than a
+                         plain <a href>/direct __printClone() call — this
+                         WHOLE fragment gets replaced on every live refresh
+                         (its own $panel resets to today/Day each time, see
+                         this file's top-of-file comment), so anything
+                         server-rendered onto these specific buttons would
+                         go stale the instant that happens without the
+                         admin having touched Day/Week/Month/Year again.
+                         downloadAnalyticsCsv()/printAnalyticsPanel() read
+                         the live selection from that same script's own
+                         closure/the freshly-swapped-in .analytics-panel-
+                         content's data-title instead — see their own
+                         docblocks. --}}
+                    <div class="flex items-center gap-1">
+                        <button type="button" onclick="downloadAnalyticsCsv()"
+                            class="text-surface-400 hover:text-surface-700 p-1.5" aria-label="Download as CSV" title="Download as CSV">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+                        </button>
+                        <button type="button" onclick="printAnalyticsPanel()"
+                            class="text-surface-400 hover:text-surface-700 p-1.5" aria-label="Print" title="Print">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.318 2.647a.75.75 0 01-.74.853H6.762a.75.75 0 01-.74-.853L6.34 18m11.32 0H6.34m10.94-9.75V4.243a.75.75 0 00-.75-.75H7.47a.75.75 0 00-.75.75V8.25m10.94 0H6.72"/></svg>
+                        </button>
+                    </div>
                 </div>
             </div>
 
+            {{-- Peak day/hour moved into the chart panel itself (see
+                 analytics-panel.blade.php) — unlike "currently in
+                 progress" (a genuine live, all-time snapshot), "when
+                 things are busiest" only means something relative to a
+                 specific window, so it now follows whichever Day/Week/
+                 Month/Year tab is selected instead of secretly always
+                 answering for all of history. --}}
             <div class="px-5 py-1.5 border-b border-surface-100 flex flex-wrap gap-x-6 gap-y-1 text-xs text-surface-500">
-                <span>Peak upload day: <span class="font-semibold text-surface-700">{{ $analytics['peak_day'] ?? '—' }}</span></span>
-                <span>Peak upload hour: <span class="font-semibold text-surface-700">{{ $analytics['peak_hour'] ?? '—' }}</span></span>
                 <span>Currently in progress: <span class="font-semibold text-surface-700">{{ $analytics['backlog_count'] }}</span> document{{ $analytics['backlog_count'] === 1 ? '' : 's' }}</span>
             </div>
 
-            <div id="analytics-panel" data-refresh-url="{{ route('admin.dashboard.analyticsPanel') }}">
+            <div id="analytics-panel" data-refresh-url="{{ route('admin.dashboard.analyticsPanel') }}" data-download-url="{{ route('admin.dashboard.analyticsPanel.download') }}">
                 @isset($panel)
                     @include('admin.partials.analytics-panel', ['panel' => $panel])
                 @endisset

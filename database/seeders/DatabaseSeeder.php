@@ -92,18 +92,26 @@ class DatabaseSeeder extends Seeder
             }
         }
 
-        // Which department(s) own each stage. Final Approval is shared by
-        // Engineering and Finance in every category, so the same two heads
-        // (Elmor Castello, Dianara Jamon) sign off all three.
+        // Which department(s) own each stage. Final Approval's own
+        // department(s) match whichever department(s) actually handled
+        // that category's earlier stages — not a blanket "both heads sign
+        // off everything" rule. Job Order genuinely involves both
+        // (Technical Review is Engineering, Budget Check is Finance), so
+        // both its heads sit on Final Approval too. Purchase Requisition
+        // never touches Engineering at all (both its stages are Finance),
+        // so only the Finance head signs its Final Approval; Service
+        // Report is the mirror case, Engineering only. A head who never
+        // had anything to do with a document isn't a meaningful check on
+        // it, just a delay.
         $stageDepartments = [
             'Job Order:Technical Review' => ['Engineering'],
             'Job Order:Budget Check' => ['Finance'],
             'Job Order:Final Approval' => ['Engineering', 'Finance'],
             'Purchase Requisition:Budget Check' => ['Finance'],
             'Purchase Requisition:Procurement Review' => ['Finance'],
-            'Purchase Requisition:Final Approval' => ['Engineering', 'Finance'],
+            'Purchase Requisition:Final Approval' => ['Finance'],
             'Service Report:Quality Inspection' => ['Engineering'],
-            'Service Report:Final Approval' => ['Engineering', 'Finance'],
+            'Service Report:Final Approval' => ['Engineering'],
         ];
 
         foreach ($stageDepartments as $key => $departments) {

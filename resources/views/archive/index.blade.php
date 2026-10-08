@@ -74,17 +74,19 @@
                  server and swaps them in without a page reload. The <form>
                  and Search/Clear buttons remain a working no-JS fallback. --}}
             <div class="bg-white rounded-xl shadow-card border border-surface-200 p-5">
-                @unless(auth()->user()->isApprover() && auth()->user()->isStaffLevel())
-                    {{-- Same pill styling as the "All Categories" back links
-                         on SLA Violation Reports and Document Tracking —
-                         light tint, ring, rounded-full — instead of a bare
-                         underlined text link, for visual consistency across
-                         every "back to the folder grid" control in the app. --}}
+                {{-- Every role has a folder grid now (Feature: Staff
+                     approvers get one too — see ArchiveController::
+                     index()'s own comment), so this back-link is no
+                     longer gated to a subset of roles. Same pill styling
+                     as the "All Categories" back links on SLA Violation
+                     Reports and Document Tracking — light tint, ring,
+                     rounded-full — instead of a bare underlined text
+                     link, for visual consistency across every "back to
+                     the folder grid" control in the app. --}}
                     <a href="{{ url()->current() }}" class="inline-flex items-center gap-1 text-xs font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 ring-1 ring-inset ring-primary-500/20 rounded-full px-3 py-1.5 transition-colors mb-3">
                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
                         All Categories
                     </a>
-                @endunless
                 <form method="GET" id="archive-filter-form" class="flex flex-wrap gap-3 items-end">
                     <div class="flex-1 min-w-[140px]">
                         <label class="block text-xs font-medium text-surface-700 mb-1">Search</label>
@@ -126,7 +128,7 @@
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-surface-700 mb-1">Sort</label>
-                        <select name="sort" id="archive-sort" class="rounded-lg border-surface-300 text-sm px-3 py-2 focus:border-primary-500 focus:ring-primary-500">
+                        <select name="sort" id="archive-sort" class="rounded-lg border-surface-300 text-sm pl-3 pr-8 py-2 focus:border-primary-500 focus:ring-primary-500">
                             <option value="newest" @selected(request('sort', 'newest') === 'newest')>Newest first</option>
                             <option value="oldest" @selected(request('sort') === 'oldest')>Oldest first</option>
                             <option value="originator" @selected(request('sort') === 'originator')>Originator (A–Z)</option>

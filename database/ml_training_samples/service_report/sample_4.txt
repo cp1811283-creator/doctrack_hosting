@@ -1,6 +1,5 @@
 Service Visit Summary
 
-Technician: Rolando Cruz
 Date of Service: October 8, 2026
 
 On this visit, Rolando Cruz performed quarterly servicing of the building's main elevator.

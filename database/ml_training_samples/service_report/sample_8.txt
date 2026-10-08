@@ -1,6 +1,5 @@
 Service Visit Summary
 
-Technician: Michael Torres
 Date of Service: October 6, 2026
 
 On this visit, Michael Torres performed diagnostic run on the backup power generator.

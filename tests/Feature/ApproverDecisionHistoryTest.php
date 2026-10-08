@@ -5,6 +5,7 @@ use App\Models\DocumentAssignment;
 use App\Models\DocumentRepository;
 use App\Models\User;
 use App\Models\WorkflowStage;
+use App\Models\WorkflowStageDepartment;
 
 function historyTestAssignment(User $approver, string $category, string $status, array $overrides = []): DocumentAssignment
 {
@@ -394,4 +395,72 @@ it('merges a self-triggered rejection cascade into ONE summary badge instead of 
     preg_match('/<td class="px-6 py-3">(.*?)<\/td>/s', $response->getContent(), $matches);
     expect(substr_count($matches[1], 'bg-rejected-50 text-rejected-700'))->toBe(1);
     expect($matches[1])->toContain('by Self Cascade Approver');
+});
+
+it('only offers the category dropdown options this approver could actually have a decision in', function () {
+    // Regression coverage for a real reported gap: the dropdown used to
+    // list all 3 known categories for every approver, so a Staff approver
+    // picked for only one category had two filter options that could
+    // never return a single result — see User::eligibleCategories().
+    $approver = User::factory()->approver('Job Order')->create();
+
+    $response = $this->actingAs($approver)->get(route('approver.history'));
+
+    $response->assertOk();
+    $response->assertSee('<option value="Job Order"', false);
+    $response->assertDontSee('<option value="Purchase Requisition"', false);
+    $response->assertDontSee('<option value="Service Report"', false);
+});
+
+it('offers a Head every category their department covers for Final Approval, not just one', function () {
+    $financeHead = User::factory()->approver()->create(['assigned_category' => null, 'level' => 'head', 'department' => 'Finance']);
+    foreach (['Job Order', 'Purchase Requisition'] as $category) {
+        $finalApproval = WorkflowStage::firstOrCreate(
+            ['document_category' => $category, 'stage_name' => 'Final Approval'],
+            ['sequence_order' => 99]
+        );
+        WorkflowStageDepartment::create(['stage_id' => $finalApproval->stage_id, 'department' => 'Finance']);
+    }
+
+    $response = $this->actingAs($financeHead)->get(route('approver.history'));
+
+    $response->assertOk();
+    $response->assertSee('<option value="Job Order"', false);
+    $response->assertSee('<option value="Purchase Requisition"', false);
+    $response->assertDontSee('<option value="Service Report"', false);
+});
+
+it('always offers "Other" as a category option, and selecting it filters correctly', function () {
+    // Regression coverage: the dropdown never offered "Other" at all, and
+    // even selecting it manually wouldn't have worked — the filter only
+    // matched the real ml_category column, with no special case for a
+    // document flagged "doesn't belong to any category" (see
+    // ArchiveController::OTHER_FOLDER's identical reasoning).
+    $approver = User::factory()->approver('Job Order')->create();
+    $stage = WorkflowStage::firstOrCreate(
+        ['document_category' => 'Job Order', 'stage_name' => 'Review'],
+        ['sequence_order' => 1]
+    );
+    $originator = User::factory()->originator()->create();
+
+    $otherDoc = DocumentRepository::create([
+        'originator_id' => $originator->user_id, 'title' => 'other-decision.txt', 'file_path' => 'documents/o.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(), 'global_status' => 'approved',
+        'ml_category' => 'Job Order', 'desired_routing' => 'unrelated',
+    ]);
+    DocumentAssignment::create([
+        'document_id' => $otherDoc->document_id, 'user_id' => $approver->user_id, 'stage_id' => $stage->stage_id,
+        'due_date' => $otherDoc->due_date, 'priority_rank' => 2, 'individual_status' => 'approved',
+        'acted_at' => now(), 'sla_expires_at' => now()->addHours(3),
+    ]);
+    // A real Job Order decision — must NOT show up under the Other filter.
+    historyTestAssignment($approver, 'Job Order', 'approved');
+
+    $page = $this->actingAs($approver)->get(route('approver.history'));
+    $page->assertOk()->assertSee('<option value="Other"', false);
+
+    $filtered = $this->actingAs($approver)->get(route('approver.history', ['category' => 'Other']));
+    $filtered->assertOk()
+        ->assertSee('other-decision.txt')
+        ->assertDontSee('history-test-');
 });

@@ -46,7 +46,7 @@
         ])->all();
 
         $annotationTextHtml = app(\App\Services\DocxRichContentService::class)
-            ->render(\Illuminate\Support\Facades\Storage::path($document->file_path), $richAnnotations)['html'];
+            ->renderStoredFile($document->file_path, $richAnnotations)['html'];
     } else {
         // Built as a plain PHP string, not a Blade @foreach/@if loop in the
         // template body — the text content here has to be byte-for-byte

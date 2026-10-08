@@ -178,6 +178,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/dashboard/refresh', [AdminController::class, 'overviewRefresh'])->middleware('throttle:polling')->name('dashboard.refresh');
         Route::get('/dashboard/drilldown/{type}', [AdminController::class, 'dashboardDrilldown'])->middleware('throttle:polling')->name('dashboard.drilldown');
         Route::get('/dashboard/analytics-panel', [AdminController::class, 'analyticsPanelRefresh'])->middleware('throttle:polling')->name('dashboard.analyticsPanel');
+        Route::get('/dashboard/analytics-panel/download', [AdminController::class, 'analyticsPanelDownload'])->middleware('throttle:polling')->name('dashboard.analyticsPanel.download');
 
         Route::get('/users', [AdminController::class, 'users'])->name('users');
         Route::get('/users/refresh', [AdminController::class, 'usersRefresh'])->name('users.refresh');

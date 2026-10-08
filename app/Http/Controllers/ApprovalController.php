@@ -8,7 +8,6 @@ use App\Models\DocumentReviewSession;
 use App\Models\SystemSetting;
 use App\Services\BusinessHoursService;
 use App\Services\SlaService;
-use App\Services\ValidationService;
 use App\Services\WorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -17,6 +16,14 @@ use Illuminate\Validation\Rule;
 
 class ApprovalController extends Controller
 {
+    /**
+     * Same pseudo-category as ArchiveController::OTHER_FOLDER — Decision
+     * History's own category filter needs the identical special case
+     * (see historyResults()), so it's redeclared here rather than reusing
+     * that one, which is private to a different controller.
+     */
+    private const OTHER_CATEGORY = 'Other';
+
     public function __construct(
         private WorkflowService $workflow,
         private SlaService $sla,
@@ -620,7 +627,16 @@ class ApprovalController extends Controller
 
         if ($request->filled('category')) {
             $category = $request->string('category');
-            $query->whereHas('document', fn ($q) => $q->where('ml_category', $category));
+            // 'Other' is a pseudo-category, not a real one the classifier
+            // ever assigns — same reasoning as ArchiveController's own
+            // OTHER_FOLDER: the classifier is closed-set, so ml_category
+            // is always one of the real known categories even for a
+            // document the originator flagged as not belonging to any of
+            // them, which is why this has to check desired_routing
+            // instead of ml_category for that one case.
+            $category->toString() === self::OTHER_CATEGORY
+                ? $query->whereHas('document', fn ($q) => $q->where('desired_routing', 'unrelated'))
+                : $query->whereHas('document', fn ($q) => $q->where('ml_category', $category));
         }
 
         // 'admin_override' isn't a real individual_status value — an admin
@@ -675,7 +691,18 @@ class ApprovalController extends Controller
     public function history(Request $request)
     {
         $decisions = $this->historyResults($request, $request->user()->user_id);
-        $categories = ValidationService::knownCategories();
+        // Only categories this approver could ever actually have a
+        // decision in — see User::eligibleCategories()'s own docblock.
+        // Previously offered all 3 categories to every approver, so a
+        // Staff approver picked for only one category saw two filter
+        // options that could never return a single result. 'Other' is
+        // always appended regardless of eligibleCategories() — ANY
+        // approver can still be hand-picked for a document flagged
+        // "doesn't belong to any category" (see DocumentController::
+        // selectApprovers()'s 'unrelated' branch, which has no category/
+        // department restriction on who can be picked), same reasoning
+        // as the Archive's own Other folder always being shown.
+        $categories = [...$request->user()->eligibleCategories(), self::OTHER_CATEGORY];
 
         return view('approver.history', compact('decisions', 'categories'));
     }
