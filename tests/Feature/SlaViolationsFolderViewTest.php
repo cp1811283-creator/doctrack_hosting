@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\AdminViolation;
 use App\Models\DocumentAssignment;
 use App\Models\DocumentRepository;
 use App\Models\SlaViolation;
@@ -67,7 +68,7 @@ test('the stat cards and approver roster stay hidden on the folder-grid screen, 
     $response = $this->actingAs($admin)->get(route('admin.sla.violations'));
 
     $response->assertOk();
-    $response->assertDontSee('Total Violations');
+    $response->assertDontSee('Approver SLA Violations');
     $response->assertDontSee('Most Violations');
     $response->assertDontSee('Approvers — Violation Counts');
 });
@@ -80,10 +81,10 @@ test('the stat cards and approver table appear once a category is picked, scoped
     $response = $this->actingAs($admin)->get(route('admin.sla.violations', ['category' => 'Job Order']));
 
     $response->assertOk();
-    $response->assertSee('Total Violations');
+    $response->assertSee('Approver SLA Violations');
     $response->assertSee('Most Violations');
     $response->assertSee('Approvers — Violation Counts');
-    $response->assertSee('Disputed');
+    $response->assertSee('Admin Violations');
 });
 
 test('clicking into a category folder shows the Admin/Approver tables and hides the folder grid', function () {
@@ -99,14 +100,50 @@ test('clicking into a category folder shows the Admin/Approver tables and hides 
     $response->assertDontSee('Browse by Category');
 });
 
-test('the Disputed card counts violations whose document was later disputed', function () {
+/**
+ * Replaces the old "Disputed card" test (removed along with that card —
+ * see sla_violations.blade.php's own comment on why: Control Center
+ * already shows an accurate, correctly-counted Disputed figure, and this
+ * page's version counted SlaViolation rows instead of documents, a
+ * confirmed real bug not worth re-fixing for a redundant number). The
+ * Admin Violations card that replaced it reuses adminViolationTotal
+ * (already covered elsewhere), scoped to the picked category and never
+ * mixing in another category's count.
+ */
+test('the Admin Violations card is scoped to the picked category', function () {
     $admin = User::factory()->admin()->create();
-    $violation = violationIn('Job Order');
-    violationIn('Job Order'); // a second, non-disputed one
+    $originator = User::factory()->originator()->create();
+    $stage = WorkflowStage::firstOrCreate(
+        ['document_category' => 'Job Order', 'stage_name' => 'Technical Review'],
+        ['sequence_order' => 1]
+    );
+    $otherStage = WorkflowStage::firstOrCreate(
+        ['document_category' => 'Service Report', 'stage_name' => 'Review'],
+        ['sequence_order' => 1]
+    );
 
-    $violation->document->update(['disputed_at' => now()]);
+    $makeAdminViolation = function (string $category, WorkflowStage $stage) use ($originator) {
+        $document = DocumentRepository::create([
+            'originator_id' => $originator->user_id, 'title' => "{$category}-".uniqid().'.txt',
+            'file_path' => 'documents/'.uniqid().'.txt', 'mime_type' => 'text/plain',
+            'due_date' => now()->addDays(5), 'global_status' => 'auto_approved', 'ml_category' => $category,
+        ]);
+        $assignment = DocumentAssignment::create([
+            'document_id' => $document->document_id, 'user_id' => $originator->user_id, 'stage_id' => $stage->stage_id,
+            'due_date' => $document->due_date, 'priority_rank' => 2, 'individual_status' => 'approved',
+            'auto_approved' => true, 'acted_at' => now(),
+        ]);
+        AdminViolation::create([
+            'document_id' => $document->document_id, 'assignment_id' => $assignment->assignment_id,
+            'violation_type' => 'late_review', 'stage_name' => $stage->stage_name, 'first_violated_at' => now(),
+        ]);
+    };
+
+    $makeAdminViolation('Job Order', $stage);
+    $makeAdminViolation('Job Order', $stage);
+    $makeAdminViolation('Service Report', $otherStage);
 
     $response = $this->actingAs($admin)->get(route('admin.sla.violations', ['category' => 'Job Order']));
 
-    expect($response->viewData('disputedCount'))->toBe(1);
+    expect($response->viewData('adminViolationTotal'))->toBe(2);
 });

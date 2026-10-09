@@ -78,10 +78,26 @@
                 </div>
                 {{-- Live-ticking "ago" only while still open — once resolved,
                      freezing it as a plain string avoids it reading as "still
-                     happening" right next to a Resolved badge. --}}
+                     happening" right next to a Resolved badge. Business-
+                     hours-aware (data-real-elapsed, same ticker as the
+                     Auto-Approval Review page's own overdue badge) rather
+                     than raw wall-clock — this IS that same backlog, just
+                     shown on a different page, so it should read the same
+                     way. --}}
                 <p class="text-xs text-surface-400 mt-0.5">
                     @if($item->isOpen)
-                        Flagged {{ $item->firstViolatedAt->format('M j, Y g:i A') }} (<span data-live-time="{{ $item->firstViolatedAt->timestamp }}">{{ $item->firstViolatedAt->diffForHumans() }}</span>)
+                        @php
+                            $flaggedElapsed = $businessHours
+                                ->businessSecondsRemaining($item->firstViolatedAt, now());
+                            $feh = intdiv($flaggedElapsed, 3600);
+                            $fem = intdiv($flaggedElapsed % 3600, 60);
+                            $flaggedElapsedLabel = $feh > 0 ? "{$feh}h {$fem}m ago" : "{$fem}m ago";
+                        @endphp
+                        Flagged {{ $item->firstViolatedAt->format('M j, Y g:i A') }}
+                        <span data-real-elapsed="{{ $flaggedElapsed }}">({{ $flaggedElapsedLabel }})</span>
+                        @if(!($isWithinBusinessHours ?? true))
+                            <span class="text-surface-400">⏸ Paused (outside business hours)</span>
+                        @endif
                     @else
                         Flagged {{ $item->firstViolatedAt->format('M j, Y g:i A') }} ({{ $item->firstViolatedAt->diffForHumans() }})
                         @if($item->resolvedAt)

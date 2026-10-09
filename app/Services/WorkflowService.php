@@ -177,6 +177,16 @@ class WorkflowService
         return [
             'documents_shifted' => $shifted,
             'assignments_recalculated' => $this->recalculatePendingSlaDeadlines(),
+            // SlaService::recalculatePendingReviewDeadlines() — the
+            // review-side counterpart, same reasoning as the pending-SLA
+            // sweep just above, just covering assignments already
+            // auto-approved and awaiting Admin's own review instead of
+            // ones still awaiting an approver's decision. Resolved via
+            // app(), not constructor injection: SlaService itself depends
+            // on WorkflowService, so a constructor dependency here would
+            // be circular (same pattern already used by
+            // autoApproveNoEligibleApprover() below).
+            'reviews_recalculated' => app(SlaService::class)->recalculatePendingReviewDeadlines(),
         ];
     }
 

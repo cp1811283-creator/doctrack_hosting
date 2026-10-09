@@ -18,7 +18,20 @@ use Carbon\Carbon;
  * this service is resolved fresh per request via normal DI, so there's no
  * staleness risk within a request, and deliberately no Cache:: usage
  * (CACHE_STORE=database has no `cache` table migrated in this app, same
- * latent gap the queue tables had). Lazy loading specifically matters
+ * latent gap the queue tables had). Deliberately NOT bound as a container
+ * singleton either, tempting as that looks for cutting down repeated
+ * ensureLoaded() queries (see the several admin views that resolve this
+ * per-row in a loop) — a singleton's cached $holidayDates would silently
+ * go stale the moment a holiday is added/removed mid-request, and in
+ * Laravel's own test HTTP client, multiple simulated requests within one
+ * test method share the same container, so a singleton resolved early in
+ * a test (e.g. computing a deadline) would still be answering with
+ * pre-holiday data after a later request in the SAME test adds one —
+ * confirmed by hand: binding this as a singleton broke
+ * AdminReviewDeadlineBusinessHoursTest's holiday-recalculation case this
+ * exact way. Callers that need to avoid repeated queries within a single
+ * render should resolve this once themselves and pass the instance down,
+ * not rely on a global binding. Lazy loading specifically matters
  * because Laravel's console kernel auto-discovers every command in
  * app/Console/Commands at boot — including ones that depend on this
  * service several layers down (CheckParallelSlas -> SlaService ->
@@ -46,7 +59,9 @@ class BusinessHoursService
     private const MAX_ITERATIONS = 400;
 
     private ?array $workingDays = null;
+
     private ?string $workStartTime = null;
+
     private ?string $workEndTime = null;
 
     /** ['Y-m-d' => true, ...] for O(1) lookup. */
@@ -74,7 +89,7 @@ class BusinessHoursService
         $this->ensureLoaded();
 
         return in_array($date->dayOfWeek, $this->workingDays, true)
-            && !isset($this->holidayDates[$date->toDateString()]);
+            && ! isset($this->holidayDates[$date->toDateString()]);
     }
 
     /**
@@ -101,8 +116,9 @@ class BusinessHoursService
         $cursor = $from->copy();
 
         for ($i = 0; $i <= self::MAX_ITERATIONS; $i++) {
-            if (!$this->isWorkingDay($cursor)) {
+            if (! $this->isWorkingDay($cursor)) {
                 $cursor = $this->startOfWindow($cursor->copy()->addDay());
+
                 continue;
             }
 
@@ -114,6 +130,7 @@ class BusinessHoursService
             }
             if ($cursor->gte($end)) {
                 $cursor = $this->startOfWindow($cursor->copy()->addDay());
+
                 continue;
             }
 
@@ -121,7 +138,7 @@ class BusinessHoursService
         }
 
         throw new \RuntimeException(
-            'BusinessHoursService: no working day found within ' . self::MAX_ITERATIONS .
+            'BusinessHoursService: no working day found within '.self::MAX_ITERATIONS.
             ' days — check sla_settings.working_days / sla_holidays for misconfiguration.'
         );
     }
@@ -148,7 +165,7 @@ class BusinessHoursService
         }
 
         throw new \RuntimeException(
-            'BusinessHoursService: could not resolve a deadline within ' . self::MAX_ITERATIONS .
+            'BusinessHoursService: could not resolve a deadline within '.self::MAX_ITERATIONS.
             ' working-day iterations — check sla_settings.working_days / sla_holidays for misconfiguration.'
         );
     }
@@ -212,7 +229,7 @@ class BusinessHoursService
         }
 
         throw new \RuntimeException(
-            'BusinessHoursService: no working day found within ' . self::MAX_ITERATIONS .
+            'BusinessHoursService: no working day found within '.self::MAX_ITERATIONS.
             ' days while adjusting a due date — check sla_settings.working_days / sla_holidays for misconfiguration.'
         );
     }

@@ -308,7 +308,7 @@
                 <h3 class="text-sm font-semibold text-surface-900">Approval Stages</h3>
             </div>
             <div class="p-6">
-                <x-workflow-stage-list :document="$document" />
+                <x-workflow-stage-list :document="$document" :business-hours="$businessHours ?? null" />
             </div>
         </div>
 

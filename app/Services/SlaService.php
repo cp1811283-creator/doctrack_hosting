@@ -445,10 +445,92 @@ class SlaService
      * Shared by both auto-approval paths above — same outcome either way,
      * just triggered by a different missed deadline.
      */
-    /** The Admin's review deadline for an auto-approved stage: a flat window from now, never past the document's due date. */
+    /**
+     * The Admin's review deadline for an auto-approved stage: 6 real
+     * WORKING hours from now (business-hours-aware, same engine every
+     * other SLA deadline in this app already uses — see
+     * WorkflowService::recalculateAssignmentSlaExpiry()'s identical
+     * pattern), never past the document's due date. Confirmed real bug
+     * fixed here: this used to be a flat now()->addHours(6) with no
+     * business-hours awareness at all — the one deadline in the whole app
+     * that didn't pause overnight/Sundays, which with a single Admin
+     * account meant "overdue" was lit almost permanently for anything
+     * auto-approved outside business hours, not a meaningful signal.
+     */
     public function reviewDeadlineFor(DocumentAssignment $assignment): Carbon
     {
-        return $this->clampToDueDate(now()->addHours(self::ADMIN_REVIEW_WINDOW_HOURS), $assignment->due_date);
+        return $this->reviewDeadlineFrom(now(), $assignment->due_date);
+    }
+
+    /**
+     * The actual 6-working-hour-from-$anchor computation, split out from
+     * reviewDeadlineFor() so recalculatePendingReviewDeadlines() below can
+     * re-run it anchored to the auto-approval's own real moment (acted_at)
+     * instead of "now" — recalculating from "now" would hand Admin a
+     * brand new 6-hour window every time a holiday changes, rather than
+     * correctly re-deriving the SAME original window under the new
+     * calendar, exactly the distinction WorkflowService::
+     * recalculateAssignmentSlaExpiry() already makes for the approver side
+     * (anchored to the assignment's own created_at, not "now").
+     */
+    private function reviewDeadlineFrom(Carbon $anchor, $dueDate): Carbon
+    {
+        $deadline = $this->businessHours->addBusinessMinutes($anchor, self::ADMIN_REVIEW_WINDOW_HOURS * 60);
+
+        return $this->clampToDueDate($deadline, $dueDate);
+    }
+
+    /**
+     * Re-syncs every assignment currently awaiting Admin's own review
+     * (auto-approved, not yet confirmed/disputed) against the current
+     * calendar — the review-side counterpart to WorkflowService::
+     * recalculatePendingSlaDeadlines(), called from the exact same two
+     * places (see AdminController::storeHoliday()/destroyHoliday()).
+     * Anchored to each assignment's own acted_at (the real moment it
+     * auto-approved — see autoApproveOne() below, which sets both
+     * acted_at and the original review_due_at in the same save), not
+     * "now", for the reason reviewDeadlineFrom() explains.
+     *
+     * Deliberately excludes any assignment still awaitingHeadSignOff()
+     * (review_due_at is null for those — see autoApproveOne()'s own logic
+     * below; there's nothing to recalculate until settleDeferredAutoApprovalReviews()
+     * either covers or reinstates it).
+     *
+     * @return int number of assignments whose review deadline actually changed
+     */
+    public function recalculatePendingReviewDeadlines(): int
+    {
+        $changed = 0;
+
+        DocumentAssignment::where('auto_approved', true)
+            ->whereNull('admin_reviewed_at')
+            ->whereNotNull('review_due_at')
+            ->with(['stage', 'document'])
+            ->get()
+            ->each(function (DocumentAssignment $assignment) use (&$changed) {
+                $newDeadline = $this->reviewDeadlineFrom($assignment->acted_at, $assignment->due_date);
+
+                if ($newDeadline->equalTo($assignment->review_due_at)) {
+                    return;
+                }
+
+                $old = $assignment->review_due_at;
+                $assignment->review_due_at = $newDeadline;
+                $assignment->save();
+                $changed++;
+
+                AuditLog::record(null, $assignment->document_id, 'review_deadline_recalculated',
+                    "Admin review deadline for stage '{$assignment->stage->stage_name}' recalculated from ".
+                    "{$old->toDayDateTimeString()} to {$newDeadline->toDayDateTimeString()} after a business-hours/holiday calendar update.");
+
+                foreach (User::where('role', 'admin')->where('is_active', true)->get() as $admin) {
+                    NotificationRecord::send($admin->user_id, $assignment->document_id,
+                        "The review deadline for '{$assignment->document->title}' (stage '{$assignment->stage->stage_name}') ".
+                        "changed to {$newDeadline->format('M j, Y g:i A')} after an update to the business-hours calendar.");
+                }
+            });
+
+        return $changed;
     }
 
     public function autoApproveOne(DocumentAssignment $assignment): void

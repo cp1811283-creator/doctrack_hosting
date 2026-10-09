@@ -362,6 +362,33 @@
     document.addEventListener('DOMContentLoaded', __docTrackUpdateRealRemaining);
     setInterval(__docTrackUpdateRealRemaining, 1000);
 
+    // The mirror image of __docTrackUpdateRealRemaining() above: for a
+    // deadline/violation that's already in the past, "how overdue is this"
+    // should also only accumulate during business hours, same reasoning as
+    // the countdown — the grace period isn't actually being burned through
+    // overnight/Sunday either. Ticks any [data-real-elapsed="<seconds>"]
+    // element UP by 1 every second ONLY while inside a working window,
+    // holding still (and showing the same "⏸ Paused" note) otherwise. No
+    // ceiling to freeze at — unlike a countdown, elapsed time never "expires".
+    function __docTrackUpdateRealElapsed() {
+        const withinHours = __isWithinBusinessHoursNow();
+
+        document.querySelectorAll('[data-real-elapsed]').forEach((el) => {
+            let elapsed = parseInt(el.dataset.realElapsed, 10);
+            if (isNaN(elapsed)) return;
+
+            if (withinHours) {
+                elapsed += 1;
+                el.dataset.realElapsed = elapsed;
+            }
+
+            el.textContent = `(${__docTrackFormatDuration(elapsed)} ago)`;
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', __docTrackUpdateRealElapsed);
+    setInterval(__docTrackUpdateRealElapsed, 1000);
+
     // Analytics "Now" line ticker — walks the vertical marker on the
     // Admin Dashboard's Day-tab chart (admin/partials/analytics-panel.blade.php)
     // forward in real time, live-clock label included. Lives here (not in

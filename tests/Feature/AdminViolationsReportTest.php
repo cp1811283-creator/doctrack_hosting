@@ -124,6 +124,58 @@ test('the Admin Violations table groups by document with stages listed underneat
         ->and($items['resolved-late-review-doc.txt']->isOpen)->toBeFalse();
 });
 
+/**
+ * Confirmed real bug caught by a user manually counting the list: a
+ * document with several late-reviewed stages (e.g. Budget Check AND
+ * Final Approval both missed) used to count as one row PER STAGE in
+ * adminViolationTotal — a raw AdminViolation row count — while the list
+ * right below it groups those same rows into ONE entry per document.
+ * 14 vs 9 for a real category in production data, exactly this shape:
+ * several multi-stage documents, each one entry in the list but several
+ * rows toward the old total. Fixed by deriving the total from the same
+ * already-grouped $documents collection instead of a separate row count,
+ * so the header/KPI number can never drift from the list length again.
+ */
+test('adminViolationTotal counts documents, not raw violation rows, when one document has several late-reviewed stages', function () {
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    $stage1 = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Budget Check', 'sequence_order' => 1]);
+    $stage2 = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Final Approval', 'sequence_order' => 2]);
+
+    // ONE document, TWO separately-missed stages — two AdminViolation rows,
+    // but it should still count as a single document in the total.
+    $doc = violationDoc($originator, 'Job Order', 'multi-stage-late-doc.txt');
+    foreach ([$stage1, $stage2] as $stage) {
+        $assignment = DocumentAssignment::create([
+            'document_id' => $doc->document_id, 'user_id' => null, 'stage_id' => $stage->stage_id,
+            'due_date' => $doc->due_date, 'priority_rank' => 2, 'individual_status' => 'approved', 'auto_approved' => true,
+        ]);
+        AdminViolation::create([
+            'document_id' => $doc->document_id, 'assignment_id' => $assignment->assignment_id,
+            'violation_type' => 'late_review', 'stage_name' => $stage->stage_name, 'first_violated_at' => now(),
+        ]);
+    }
+
+    // A second, single-stage document — counts as one more.
+    $singleStage = WorkflowStage::create(['document_category' => 'Job Order', 'stage_name' => 'Technical Review', 'sequence_order' => 3]);
+    $otherDoc = violationDoc($originator, 'Job Order', 'single-stage-late-doc.txt');
+    $otherAssignment = DocumentAssignment::create([
+        'document_id' => $otherDoc->document_id, 'user_id' => null, 'stage_id' => $singleStage->stage_id,
+        'due_date' => $otherDoc->due_date, 'priority_rank' => 2, 'individual_status' => 'approved', 'auto_approved' => true,
+    ]);
+    AdminViolation::create([
+        'document_id' => $otherDoc->document_id, 'assignment_id' => $otherAssignment->assignment_id,
+        'violation_type' => 'late_review', 'stage_name' => $singleStage->stage_name, 'first_violated_at' => now(),
+    ]);
+
+    $response = $this->actingAs($admin)->get(route('admin.sla.violations', ['category' => 'Job Order']));
+
+    // 3 raw AdminViolation rows exist, but only 2 distinct documents.
+    expect(AdminViolation::count())->toBe(3)
+        ->and($response->viewData('adminViolationTotal'))->toBe(2)
+        ->and($response->viewData('adminViolations'))->toHaveCount(2);
+});
+
 test('an Open row links to the Auto-Approval Review page, a Resolved row renders as plain non-clickable text', function () {
     // Regression coverage for a real reported bug (2026-10-03): a Resolved
     // row's "highlight" link pointed at AdminController::slaQueueData(),

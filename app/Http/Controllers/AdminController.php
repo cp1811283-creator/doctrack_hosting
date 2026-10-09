@@ -19,6 +19,7 @@ use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\WorkflowStage;
 use App\Services\ApprovalTimeMlService;
+use App\Services\BusinessHoursService;
 use App\Services\ClassificationService;
 use App\Services\DocumentMovementTimeline;
 use App\Services\PerformanceInsightsService;
@@ -45,6 +46,7 @@ class AdminController extends Controller
         private ValidationService $validator,
         private PerformanceInsightsService $performance,
         private ApprovalTimeMlService $timeMl,
+        private BusinessHoursService $businessHours,
     ) {}
 
     /**
@@ -78,7 +80,6 @@ class AdminController extends Controller
             // in-progress count with nothing to tell them apart.
             'disputed' => $this->disputedDocuments()->count(),
             'active_users' => User::count(),
-            'violations_count' => SlaViolation::count(),
         ];
     }
 
@@ -830,12 +831,14 @@ class AdminController extends Controller
         [$recentActivity, $analytics] = $this->dashboardExtras();
         $activeModel = MlModelRepository::active();
         $modelHistory = $this->modelHistory();
+        $isWithinBusinessHours = $this->businessHours->isWithinWorkingWindow(now());
+        $businessHours = $this->businessHours;
 
         $panel = $this->resolveAnalyticsPanel($request);
 
         return view('admin.dashboard', compact(
             'stats', 'autoApprovalAlerts', 'reviewCount', 'activeModel', 'modelHistory',
-            'recentActivity', 'analytics', 'panel'
+            'recentActivity', 'analytics', 'panel', 'isWithinBusinessHours', 'businessHours'
         ));
     }
 
@@ -1135,10 +1138,12 @@ class AdminController extends Controller
         [$recentActivity, $analytics] = $this->dashboardExtras();
         $activeModel = MlModelRepository::active();
         $modelHistory = $this->modelHistory();
+        $isWithinBusinessHours = $this->businessHours->isWithinWorkingWindow(now());
+        $businessHours = $this->businessHours;
 
         return view('admin.partials.overview', compact(
             'stats', 'autoApprovalAlerts', 'reviewCount', 'activeModel', 'modelHistory',
-            'recentActivity', 'analytics'
+            'recentActivity', 'analytics', 'isWithinBusinessHours', 'businessHours'
         ));
     }
 
@@ -1841,16 +1846,20 @@ class AdminController extends Controller
     public function slaQueue(Request $request)
     {
         $reviewContainers = $this->slaQueueData($request);
+        $isWithinBusinessHours = $this->businessHours->isWithinWorkingWindow(now());
+        $businessHours = $this->businessHours;
 
-        return view('admin.sla_queue', compact('reviewContainers'));
+        return view('admin.sla_queue', compact('reviewContainers', 'isWithinBusinessHours', 'businessHours'));
     }
 
     /** Live-refresh fragment (Feature: realtime) — same data as slaQueue(), just the results. */
     public function slaQueueRefresh(Request $request)
     {
         $reviewContainers = $this->slaQueueData($request);
+        $isWithinBusinessHours = $this->businessHours->isWithinWorkingWindow(now());
+        $businessHours = $this->businessHours;
 
-        return view('admin.partials.sla-queue-results', compact('reviewContainers'));
+        return view('admin.partials.sla-queue-results', compact('reviewContainers', 'isWithinBusinessHours', 'businessHours'));
     }
 
     /** Cheap change-signal for the live-poll fallback — same pattern as overviewPoll(). */
@@ -2108,9 +2117,22 @@ class AdminController extends Controller
         // an existing due date — but SLA windows still need re-syncing
         // since more business time may now be available before the
         // (unchanged) due date than was assumed when they were computed.
+        // Same reasoning applies to assignments already auto-approved and
+        // awaiting Admin's own review (see SlaService::
+        // recalculatePendingReviewDeadlines()'s own docblock) — not just
+        // ones still awaiting an approver's decision.
         $changed = $this->workflow->recalculatePendingSlaDeadlines();
+        $reviewsChanged = $this->sla->recalculatePendingReviewDeadlines();
 
-        return back()->with('status', 'Holiday removed.'.($changed ? " {$changed} pending assignment(s) had their SLA deadline recalculated." : ''));
+        $message = 'Holiday removed.';
+        if ($changed > 0) {
+            $message .= " {$changed} pending assignment(s) had their SLA deadline recalculated.";
+        }
+        if ($reviewsChanged > 0) {
+            $message .= " {$reviewsChanged} assignment(s) awaiting review had their deadline recalculated.";
+        }
+
+        return back()->with('status', $message);
     }
 
     private function calendarSyncSummary(array $sync): string
@@ -2121,6 +2143,9 @@ class AdminController extends Controller
         }
         if ($sync['assignments_recalculated'] > 0) {
             $parts[] = "{$sync['assignments_recalculated']} pending assignment(s) had their SLA deadline recalculated";
+        }
+        if (($sync['reviews_recalculated'] ?? 0) > 0) {
+            $parts[] = "{$sync['reviews_recalculated']} assignment(s) awaiting review had their deadline recalculated";
         }
 
         return $parts ? ' '.implode('; ', $parts).'.' : '';
@@ -2229,7 +2254,6 @@ class AdminController extends Controller
             ->groupBy('stage_name')
             ->orderByDesc('total')
             ->first();
-        $disputedCount = (clone $query)->whereHas('document', fn ($q) => $q->whereNotNull('disputed_at'))->count();
 
         $roster = User::where('role', 'approver')
             ->withCount(['slaViolations as violation_count' => function ($q) use ($request) {
@@ -2250,7 +2274,6 @@ class AdminController extends Controller
             'topStageTotal' => $topStage->total ?? 0,
             'rank' => $rank === false ? null : $rank + 1,
             'rosterCount' => $roster->count(),
-            'disputedCount' => $disputedCount,
         ]);
     }
 
@@ -2339,12 +2362,6 @@ class AdminController extends Controller
         $byStage = (clone $query)->selectRaw('stage_name, count(*) as total')
             ->groupBy('stage_name')->orderByDesc('total')->limit(5)->get();
 
-        // Disputed — how many of these violations were later flagged by an
-        // Admin as a bad auto-approval (see AdminController::
-        // reviewAutoApproval()). Otherwise only visible per-row as a badge,
-        // never as a total anywhere on this page.
-        $disputedCount = (clone $query)->whereHas('document', fn ($q) => $q->whereNotNull('disputed_at'))->count();
-
         $totalCount = (clone $query)->count();
 
         // Full roster for the Approvers table — EVERY approver, not just
@@ -2379,7 +2396,6 @@ class AdminController extends Controller
             'byApprover' => $byApprover,
             'approverRoster' => $approverRoster,
             'byStage' => $byStage,
-            'disputedCount' => $disputedCount,
             'totalCount' => $totalCount,
         ];
     }
@@ -2422,8 +2438,6 @@ class AdminController extends Controller
             $query->whereHas('document', fn ($q) => $q->where('ml_category', $category));
         }
 
-        $totalCount = (clone $query)->count();
-
         // Feature: client-side row fitting — see resources/js/app.js's
         // initFittedPagination() and AdminController::documents()'s
         // matching docblock. Every matching document is sent in one
@@ -2448,9 +2462,21 @@ class AdminController extends Controller
             ->sortByDesc('firstViolatedAt')
             ->values();
 
+        // Confirmed real bug: this used to be (clone $query)->count(), a
+        // raw AdminViolation ROW count — a document with 3 late-reviewed
+        // stages counts as 3 here but as ONE entry in $documents below
+        // (grouped by document_id), so the header text/KPI card and the
+        // actual list length could — and did — disagree (14 vs 9 for a
+        // real category, caught by a user manually counting the list).
+        // Derived from $documents itself now instead of a second query —
+        // guarantees this can never drift from what the list shows again.
+        $totalCount = $documents->count();
+
         return [
             'adminViolationTotal' => $totalCount,
             'adminViolations' => $documents,
+            'isWithinBusinessHours' => $this->businessHours->isWithinWorkingWindow(now()),
+            'businessHours' => $this->businessHours,
         ];
     }
 

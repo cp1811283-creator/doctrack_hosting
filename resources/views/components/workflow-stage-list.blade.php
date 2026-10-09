@@ -1,4 +1,15 @@
-@props(['document', 'highlightAssignmentId' => null, 'showDueDate' => true])
+@props(['document', 'highlightAssignmentId' => null, 'showDueDate' => true, 'businessHours' => null])
+
+{{--
+    $businessHours (optional): the caller's own already-resolved
+    BusinessHoursService instance, passed down so the forecast-estimate
+    branch below reuses it instead of resolving (and re-querying the
+    holiday table for) a fresh one every time this component renders —
+    see BusinessHoursService's own docblock on why it isn't a container
+    singleton. Falls back to resolving one locally for any caller that
+    doesn't have one handy yet, so this never breaks for not being passed.
+--}}
+@php $businessHours = $businessHours ?? app(\App\Services\BusinessHoursService::class); @endphp
 
 {{--
     Full workflow-stage pipeline for this document's category (Feature:
@@ -144,7 +155,7 @@
             // Business-hours-aware, not plain wall-clock addition — the same
             // helper every sla_expires_at deadline already uses, so this can
             // never claim an approval will land at 8 PM or on a Sunday.
-            $estApprovalBy = app(\App\Services\BusinessHoursService::class)
+            $estApprovalBy = $businessHours
                 ->addBusinessMinutes(now(), (int) ceil($forecast->totalSeconds / 60));
 
             // Never claim a later estimate than the document's own hard

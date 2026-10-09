@@ -22,30 +22,40 @@
             </p>
             <form method="POST" action="{{ route('admin.systemSettings.businessHoursToggle') }}">
                 @csrf
-                {{-- `relative` moved from the track span onto this label,
-                     and the knob span pulled out to sit directly beside
-                     the checkbox (not nested inside the track span) — a
-                     real confirmed bug: Tailwind's peer-checked: only ever
-                     matches a DIRECT sibling of the .peer element (the
-                     underlying CSS is a plain ~ sibling selector, which
-                     cannot reach into a sibling's own children). The track
-                     span WAS a direct sibling, so peer-checked:bg-primary-700
-                     on it correctly worked; the knob span was one level
-                     too deep, so peer-checked:translate-x-4 on it could
-                     never match — the switch's background correctly
-                     changed color on toggle, but the knob never actually
-                     slid, confirmed from the two screenshots this was
-                     reported with. The knob's absolute positioning now
-                     anchors to this label (made relative) instead of the
-                     track span, landing in the exact same visual spot
-                     since the track is still the first element in flow. --}}
-                <label class="relative flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" name="enforce_business_hours_decisions" value="1"
-                        {{ $businessHoursEnforced ? 'checked' : '' }}
-                        onchange="this.form.submit()"
-                        class="sr-only peer">
-                    <span class="w-10 h-6 bg-surface-200 peer-checked:bg-primary-700 rounded-full transition-colors"></span>
-                    <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></span>
+                {{-- Second confirmed real bug on this same control: the
+                     knob used to be positioned absolute relative to the
+                     whole <label> (made `relative` after the first fix
+                     below), which works fine ONLY while the label's text
+                     stays short enough to sit on one line. At a larger
+                     text-size step (see resources/css/app.css's
+                     data-text-size rules — deliberately rem-based, so the
+                     WHOLE UI scales, this control included) the label text
+                     wraps onto 2-3 lines in this narrow sidebar card,
+                     growing the label taller; flex's items-center then
+                     re-centers the track against that new (taller) height,
+                     but the knob's fixed top-0.5/left-0.5 offset is still
+                     measured from the LABEL's corner, not the track's new
+                     position — so the knob visibly drifts away from the
+                     track once the text wraps. Fixed by giving the
+                     checkbox+track+knob their own small, fixed-size
+                     wrapper (w-10 h-6), independent of however tall the
+                     adjacent text block grows. All three stay direct
+                     siblings of each other inside it, so peer-checked:
+                     keeps working exactly as the FIRST fix below already
+                     established (peer-checked: only ever matches a DIRECT
+                     sibling of the .peer element — the underlying CSS is a
+                     plain ~ sibling selector, which cannot reach into a
+                     sibling's own children; that's why the knob isn't
+                     nested inside the track span). --}}
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <span class="relative inline-flex w-10 h-6 shrink-0">
+                        <input type="checkbox" name="enforce_business_hours_decisions" value="1"
+                            {{ $businessHoursEnforced ? 'checked' : '' }}
+                            onchange="this.form.submit()"
+                            class="sr-only peer">
+                        <span class="absolute inset-0 bg-surface-200 peer-checked:bg-primary-700 rounded-full transition-colors"></span>
+                        <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></span>
+                    </span>
                     <span class="text-xs font-medium text-surface-700">
                         Restrict approver decisions to business hours — currently <strong class="{{ $businessHoursEnforced ? 'text-primary-700' : 'text-surface-500' }}">{{ $businessHoursEnforced ? 'ON' : 'OFF' }}</strong>
                     </span>

@@ -9,6 +9,7 @@ use App\Models\SubmissionBatch;
 use App\Models\User;
 use App\Models\WorkflowStage;
 use App\Rules\ReliableMimeType;
+use App\Services\BusinessHoursService;
 use App\Services\DocxRichContentService;
 use App\Services\TextDiffService;
 use App\Services\ValidationService;
@@ -24,7 +25,7 @@ use Throwable;
 
 class DocumentController extends Controller
 {
-    public function __construct(private WorkflowService $workflow) {}
+    public function __construct(private WorkflowService $workflow, private BusinessHoursService $businessHours) {}
 
     /**
      * The originator's filtered/paginated submissions query — shared by
@@ -299,8 +300,9 @@ class DocumentController extends Controller
         $this->authorize('viewTracking', $document);
 
         $document->load(['assignments.stage', 'assignments.approver', 'auditLogs.user', 'previousVersion', 'nextVersion', 'openAnnotations.raisedBy']);
+        $businessHours = $this->businessHours;
 
-        return view('originator.tracking', compact('document'));
+        return view('originator.tracking', compact('document', 'businessHours'));
     }
 
     /**
@@ -504,8 +506,9 @@ class DocumentController extends Controller
         $this->authorize('viewTracking', $document);
 
         $document->load(['assignments.stage', 'assignments.approver', 'auditLogs.user', 'previousVersion', 'nextVersion', 'openAnnotations.raisedBy']);
+        $businessHours = $this->businessHours;
 
-        return view('originator.partials.tracking-content', compact('document'));
+        return view('originator.partials.tracking-content', compact('document', 'businessHours'));
     }
 
     /**

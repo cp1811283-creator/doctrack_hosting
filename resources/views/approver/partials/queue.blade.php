@@ -121,7 +121,7 @@
                          see what already happened and what's still to come — not just
                          whichever single stage currently needs a decision. --}}
                     <div class="mb-4">
-                        <x-workflow-stage-list :document="$doc" :show-due-date="false" />
+                        <x-workflow-stage-list :document="$doc" :show-due-date="false" :business-hours="$businessHours ?? null" />
                     </div>
 
                     {{-- Full stage pipeline above already highlights which of these belong

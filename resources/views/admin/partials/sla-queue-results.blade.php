@@ -25,18 +25,50 @@
         <div class="p-6">
             <div class="flex items-start justify-between gap-3 mb-1">
                 <h3 class="text-sm font-semibold text-surface-900">{{ $doc->title }}</h3>
-                {{-- Live countdown/overdue, not a static timestamp — same
-                     data-live-time mechanism the "SLA violated"/"Auto-
-                     approved" lines below already use, so this ticks
-                     without a page reload instead of only updating on
-                     the next poll/refresh. --}}
+                {{-- Both branches are business-hours-aware now — a future
+                     deadline's "remaining" via data-real-remaining (counts
+                     down, only during business hours), and an already-
+                     missed deadline's "ago" via data-real-elapsed (counts
+                     UP, only during business hours) — see
+                     __docTrackUpdateRealRemaining()/__docTrackUpdateRealElapsed()
+                     in layouts/app.blade.php. Both review_due_at
+                     (SlaService::reviewDeadlineFor()) and this "how overdue"
+                     readout are measured in the same unit (working time),
+                     so the on-screen numbers never imply urgency — or
+                     backlog — that isn't actually accruing outside business
+                     hours. The "⏸ Paused" label only needs to appear once
+                     here (not repeated on every line further down this
+                     card) since it applies to the whole card at once. --}}
                 @if($reviewDueAt)
                     <span class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold
                         {{ $reviewOverdue ? 'bg-rejected-50 text-rejected-700 ring-1 ring-inset ring-rejected-500/20' : 'bg-processing-50 text-processing-700 ring-1 ring-inset ring-processing-500/20' }}">
                         @if($reviewOverdue)
-                            ⚠ Review overdue since {{ $reviewDueAt->format('M j, g:i A') }} (<span data-live-time="{{ $reviewDueAt->timestamp }}">{{ $reviewDueAt->diffForHumans() }}</span>)
+                            @php
+                                $reviewOverdueSeconds = $businessHours
+                                    ->businessSecondsRemaining($reviewDueAt, now());
+                                $roh = intdiv($reviewOverdueSeconds, 3600);
+                                $rom = intdiv($reviewOverdueSeconds % 3600, 60);
+                                $reviewOverdueLabel = $roh > 0 ? "{$roh}h {$rom}m ago" : "{$rom}m ago";
+                            @endphp
+                            ⚠ Review overdue since {{ $reviewDueAt->format('M j, g:i A') }}
+                            <span data-real-elapsed="{{ $reviewOverdueSeconds }}">({{ $reviewOverdueLabel }})</span>
                         @else
-                            Review by {{ $reviewDueAt->format('M j, g:i A') }} (<span data-live-time="{{ $reviewDueAt->timestamp }}">{{ $reviewDueAt->diffForHumans() }}</span>)
+                            @php
+                                $reviewRealSecondsRemaining = $businessHours
+                                    ->businessSecondsRemaining(now(), $reviewDueAt);
+                                if ($reviewRealSecondsRemaining <= 0) {
+                                    $reviewRealRemainingLabel = 'expired';
+                                } else {
+                                    $rrh = intdiv($reviewRealSecondsRemaining, 3600);
+                                    $rrm = intdiv($reviewRealSecondsRemaining % 3600, 60);
+                                    $reviewRealRemainingLabel = $rrh > 0 ? "{$rrh}h {$rrm}m remaining" : "{$rrm}m remaining";
+                                }
+                            @endphp
+                            Review by {{ $reviewDueAt->format('M j, g:i A') }}
+                            <span data-real-remaining="{{ max(0, $reviewRealSecondsRemaining) }}">({{ $reviewRealRemainingLabel }})</span>
+                        @endif
+                        @if(!($isWithinBusinessHours ?? true))
+                            <span class="text-[10px] text-surface-400">⏸ Paused (outside business hours)</span>
                         @endif
                     </span>
                 @endif
@@ -51,7 +83,7 @@
             </p>
 
             <div class="mb-4">
-                <x-workflow-stage-list :document="$doc" :show-due-date="false" />
+                <x-workflow-stage-list :document="$doc" :show-due-date="false" :business-hours="$businessHours ?? null" />
             </div>
 
             <ul class="mb-4 divide-y divide-surface-100 border border-surface-100 rounded-lg overflow-hidden">
@@ -98,10 +130,26 @@
                                              "violated". --}}
                                         No eligible approver at routing time &middot;
                                     @else
+                                        @php
+                                            $violatedElapsed = $reviewAssignment->sla_expires_at
+                                                ? $businessHours->businessSecondsRemaining($reviewAssignment->sla_expires_at, now())
+                                                : 0;
+                                            $veh = intdiv($violatedElapsed, 3600);
+                                            $vem = intdiv($violatedElapsed % 3600, 60);
+                                            $violatedElapsedLabel = $veh > 0 ? "{$veh}h {$vem}m ago" : "{$vem}m ago";
+                                        @endphp
                                         Was assigned to: {{ $reviewAssignment->approver->full_name ?? 'a deactivated account' }} &middot;
-                                        SLA violated {{ optional($reviewAssignment->sla_expires_at)->format('M j, Y g:i A') }} (<span data-live-time="{{ optional($reviewAssignment->sla_expires_at)->timestamp }}">{{ optional($reviewAssignment->sla_expires_at)->diffForHumans() }}</span>) &middot;
+                                        SLA violated {{ optional($reviewAssignment->sla_expires_at)->format('M j, Y g:i A') }} <span data-real-elapsed="{{ $violatedElapsed }}">({{ $violatedElapsedLabel }})</span> &middot;
                                     @endif
-                                    Auto-approved {{ optional($reviewAssignment->acted_at)->format('M j, Y g:i A') }} (<span data-live-time="{{ optional($reviewAssignment->acted_at)->timestamp }}">{{ optional($reviewAssignment->acted_at)->diffForHumans() }}</span>)
+                                    @php
+                                        $actedElapsed = $reviewAssignment->acted_at
+                                            ? $businessHours->businessSecondsRemaining($reviewAssignment->acted_at, now())
+                                            : 0;
+                                        $aeh = intdiv($actedElapsed, 3600);
+                                        $aem = intdiv($actedElapsed % 3600, 60);
+                                        $actedElapsedLabel = $aeh > 0 ? "{$aeh}h {$aem}m ago" : "{$aem}m ago";
+                                    @endphp
+                                    Auto-approved {{ optional($reviewAssignment->acted_at)->format('M j, Y g:i A') }} <span data-real-elapsed="{{ $actedElapsed }}">({{ $actedElapsedLabel }})</span>
                                 </p>
                             @endforeach
                         </div>

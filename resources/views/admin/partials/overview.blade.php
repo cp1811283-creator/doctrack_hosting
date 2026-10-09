@@ -175,9 +175,20 @@
                             <p class="font-medium text-surface-800 truncate">{{ $row->document->title }}</p>
                             <a href="{{ route('admin.sla.queue') }}" class="shrink-0 text-xs bg-primary-700 text-white px-2.5 py-1 rounded-lg font-medium hover:bg-primary-800 shadow-sm transition-colors">Review</a>
                         </div>
+                        @php
+                            $alertElapsed = $row->acted_at
+                                ? $businessHours->businessSecondsRemaining($row->acted_at, now())
+                                : 0;
+                            $alh = intdiv($alertElapsed, 3600);
+                            $alm = intdiv($alertElapsed % 3600, 60);
+                            $alertElapsedLabel = $alh > 0 ? "{$alh}h {$alm}m ago" : "{$alm}m ago";
+                        @endphp
                         <p class="text-xs text-surface-400 mt-0.5">
                             {{ $row->stage_count }} stage{{ $row->stage_count === 1 ? '' : 's' }} auto-approved &middot;
-                            <span data-live-time="{{ optional($row->acted_at)->timestamp }}">{{ optional($row->acted_at)->diffForHumans() }}</span>
+                            <span data-real-elapsed="{{ $alertElapsed }}">({{ $alertElapsedLabel }})</span>
+                            @if(!($isWithinBusinessHours ?? true))
+                                <span class="text-surface-400">⏸ Paused</span>
+                            @endif
                         </p>
                     </li>
                 @empty

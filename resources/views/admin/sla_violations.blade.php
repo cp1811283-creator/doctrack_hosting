@@ -8,17 +8,26 @@
     {{-- Back to the folder grid — above the stat cards, first thing
          visible once you're inside a category. Styled as a filled pill
          rather than a bare link since it's now the top-most element on
-         the page. --}}
+         the page. Paired with a category label (confirmed real gap —
+         once inside a folder, nothing on the page said WHICH category
+         you were looking at; the page title stays the generic "SLA
+         Violation Reports" and the back-pill only names where "back"
+         goes, not where "here" is) — same light pill-badge treatment
+         the Archive page already uses for the identical purpose. --}}
     @unless($showFolders)
-        <a href="{{ url()->current() }}" class="inline-flex items-center gap-1 text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 ring-1 ring-inset ring-primary-500/20 rounded-full px-3 py-1.5 transition-colors">
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
-            All Categories
-        </a>
+        <div class="flex items-center gap-2">
+            <a href="{{ url()->current() }}" class="inline-flex items-center gap-1 text-sm font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 ring-1 ring-inset ring-primary-500/20 rounded-full px-3 py-1.5 transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
+                All Categories
+            </a>
+            <span class="inline-flex items-center px-3 py-1.5 rounded-full bg-surface-100 text-sm font-medium text-surface-700">{{ request('category') }}</span>
+        </div>
     @endunless
 
     {{-- Each card carries a stable id (see the script below) — clicking an
-         approver's row further down swaps Total Violations/Most Violations/
-         Top Bottleneck Stage/Disputed to THAT approver's own numbers. They
+         approver's row further down swaps Approver SLA Violations/Most
+         Violations/Top Bottleneck Stage/Disputed to THAT approver's own
+         numbers. They
          stay showing that approver until a different one is clicked —
          closing the popup does NOT revert them (see selectApprover() below;
          there used to be a restore-on-close here, but that made the cards
@@ -38,7 +47,37 @@
     @unless($showFolders)
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="bg-white rounded-xl shadow-card border border-surface-200 p-5">
-                <p class="text-sm text-surface-500 mb-1">Total Violations</p>
+                {{-- Deliberately does NOT swap when an approver row is
+                     clicked below, unlike the 3 cards after it —
+                     AdminViolation (late_review) isn't attributed to any
+                     approver at all (see the model's own docblock: "this
+                     queue has no single assigned owner the way an
+                     approver's seat does"), so there's no real per-
+                     approver number to show here. Stays on the category-
+                     wide total the whole time. Replaces the old "Disputed"
+                     card (removed — Control Center's own Disputed KPI
+                     already covers that, system-wide and correctly
+                     counted; this page's version counted SlaViolation
+                     rows instead of documents, a confirmed real bug, not
+                     worth re-fixing for a number that was redundant with
+                     Control Center's anyway). --}}
+                <p class="text-sm text-surface-500 mb-1">Admin Violations</p>
+                <p class="text-2xl font-bold text-processing-700" id="stat-admin-violations">{{ $adminViolationTotal }}</p>
+            </div>
+            <div class="bg-white rounded-xl shadow-card border border-surface-200 p-5">
+                {{-- "Approver" is load-bearing here, not decoration — this
+                     counts SlaViolation rows only (an approver missing
+                     their own deadline), a different model and a
+                     different count than the Admin Violations card before
+                     it/the Admin Violations panel below (AdminViolation,
+                     Admin missing ITS OWN review deadline). They used to
+                     both sit on this page under the generic label "Total
+                     Violations" with no indication they're different
+                     things — confirmed via a user screenshot where the two
+                     numbers (4 vs 12) looked like a bug before anyone
+                     realized they were counting different violation types
+                     entirely. --}}
+                <p class="text-sm text-surface-500 mb-1">Approver SLA Violations</p>
                 <p class="text-2xl font-bold text-rejected-700" id="stat-total-violations">{{ $totalCount }}</p>
             </div>
             <div class="bg-white rounded-xl shadow-card border border-surface-200 p-5">
@@ -50,10 +89,6 @@
                 <p class="text-sm text-surface-500 mb-1">Top Bottleneck Stage</p>
                 <p class="text-sm font-semibold text-surface-900" id="stat-top-stage-name">{{ $byStage->first()->stage_name ?? '—' }}</p>
                 <p class="text-sm text-surface-400" id="stat-top-stage-sub">{{ $byStage->first()->total ?? 0 }} violation(s)</p>
-            </div>
-            <div class="bg-white rounded-xl shadow-card border border-surface-200 p-5">
-                <p class="text-sm text-surface-500 mb-1">Disputed</p>
-                <p class="text-2xl font-bold text-processing-700" id="stat-disputed">{{ $disputedCount }}</p>
             </div>
         </div>
     @endunless
@@ -236,7 +271,22 @@
             const adminOpts = {
                 refreshUrl: adminResultsEl.dataset.refreshUrl,
                 target: adminResultsEl,
-                onSwap: function () { adminFitted.refit(); },
+                onSwap: function () {
+                    adminFitted.refit();
+                    // stat-admin-violations lives in the top card row, outside
+                    // this swapped fragment (just the list is), so a live
+                    // update left it stale otherwise — same document-count
+                    // unit as adminViolationTotal (.admin-violation-row is
+                    // one per document, see admin-violations-results.blade.php),
+                    // counted from the DOM instead of a second fetch since
+                    // the now-swapped list already has the real total,
+                    // pagination-hidden rows included (initFittedPagination
+                    // hides overflow rows with a class, never removes them).
+                    const statEl = document.getElementById('stat-admin-violations');
+                    if (statEl) {
+                        statEl.textContent = adminResultsEl.querySelectorAll('.admin-violation-row').length;
+                    }
+                },
             };
             startLiveChannel('admin-dashboard', '.admin.activity-logged', adminOpts);
             startLivePoll({ ...adminOpts, pollUrl: adminResultsEl.dataset.pollUrl });
@@ -261,7 +311,8 @@
                         : `of ${data.rosterCount} approvers`;
                     document.getElementById('stat-top-stage-name').textContent = data.topStageName;
                     document.getElementById('stat-top-stage-sub').textContent = `${data.topStageTotal} violation(s)`;
-                    document.getElementById('stat-disputed').textContent = data.disputedCount;
+                    // stat-admin-violations is deliberately left untouched here
+                    // — see its own comment in the markup above for why.
                 })
                 .catch(() => {});
         };

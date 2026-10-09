@@ -303,6 +303,12 @@ class ApprovalController extends Controller
         return [
             'businessHoursEnforced' => SystemSetting::current()->enforce_business_hours_decisions,
             'isWithinBusinessHours' => $this->businessHours->isWithinWorkingWindow(now()),
+            // Shared instance, passed down to x-workflow-stage-list so its
+            // own forecast estimate doesn't resolve (and re-query the
+            // holiday table for) a second one — see BusinessHoursService's
+            // own docblock on why this is passed explicitly rather than a
+            // container singleton.
+            'businessHours' => $this->businessHours,
         ];
     }
 
