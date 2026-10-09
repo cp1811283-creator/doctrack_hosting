@@ -84,15 +84,18 @@ it('Year tab shows a peak month', function () {
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
-    peakUploadDoc($originator, Carbon::parse('2024-03-05 10:00:00'));
-    peakUploadDoc($originator, Carbon::parse('2024-03-20 10:00:00'));
-    peakUploadDoc($originator, Carbon::parse('2025-01-05 10:00:00'));
+    // Year is a trailing 12-month window ending today (Aug 13, 2025 –
+    // Aug 12, 2026 from "now" above) — both dates must fall inside that
+    // window, not just share a calendar year.
+    peakUploadDoc($originator, Carbon::parse('2025-10-05 10:00:00'));
+    peakUploadDoc($originator, Carbon::parse('2025-10-20 10:00:00'));
+    peakUploadDoc($originator, Carbon::parse('2026-01-05 10:00:00'));
 
     $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'year']));
 
     $response->assertOk()
         ->assertSee('Peak upload month')
-        ->assertSee('March 2024');
+        ->assertSee('October 2025');
 });
 
 it('shows no peak metric at all for a window with no uploads, instead of a misleading placeholder', function () {

@@ -47,7 +47,7 @@
     <div class="lg:col-span-2">
         {{--
             Analytics — ONE reusable panel (see
-            AdminController::analyticsPanelData()) whose content is
+            AdminController::analyticsRangeData()) whose content is
             fetched via AJAX whenever the Day/Week/Month/Year tab or the
             date filter changes — never four pre-rendered panels toggled
             by CSS. The wrapper below carries the persistent id + refresh
@@ -66,7 +66,21 @@
             <div class="px-5 py-3 border-b border-surface-200 flex items-center justify-between flex-wrap gap-3">
                 <h2 class="text-sm font-semibold text-surface-900 tracking-tight">Analytics</h2>
                 <div class="flex items-center gap-2 flex-wrap">
-                    <input type="date" id="analytics-date-filter" value="{{ $panel['as_of'] ?? now()->toDateString() }}"
+                    {{-- The ONE real control — two calendars, From and To
+                         (Feature: see AdminController::analyticsRangeData()).
+                         Day/Week/Month/Year below are just presets that fill
+                         these two in for you (a click on "Day" sets both to
+                         today, which alone is what makes the chart render
+                         as 24 hourly points — picking the same date twice
+                         needs no separate "single day" concept of its own,
+                         see dashboard.blade.php's own comment on this).
+                         There is no longer a third "as of" date anywhere —
+                         these two fields ARE the whole scope, always. --}}
+                    <input type="date" id="analytics-from-filter" value="{{ $panel['from'] ?? now()->toDateString() }}"
+                        max="{{ now()->toDateString() }}"
+                        class="text-xs rounded-lg border border-surface-200 px-2 py-1.5 text-surface-600 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+                    <span class="text-xs text-surface-400">–</span>
+                    <input type="date" id="analytics-to-filter" value="{{ $panel['to'] ?? now()->toDateString() }}"
                         max="{{ now()->toDateString() }}"
                         class="text-xs rounded-lg border border-surface-200 px-2 py-1.5 text-surface-600 focus:outline-none focus:ring-1 focus:ring-primary-500" />
                     <div class="inline-flex rounded-lg border border-surface-200 overflow-hidden text-xs font-medium">

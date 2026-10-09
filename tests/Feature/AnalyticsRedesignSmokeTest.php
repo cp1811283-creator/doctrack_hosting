@@ -79,23 +79,50 @@ it('serves the analytics panel fragment via AJAX for a given granularity and dat
     $response->assertSee('data-granularity="month"', false);
 });
 
-it('zero-fills the analytics chart so every period in range appears, not just active ones', function () {
+it('zero-fills the Year tab so every month in range appears, not just active ones', function () {
     $admin = User::factory()->admin()->create();
     $originator = User::factory()->originator()->create();
 
-    // Two uploads 4 months apart, with silent months between them — the
-    // chart must still render one row per month across the whole range,
-    // not just the two months something happened (the original bug this
-    // fixes). Uses the Month tab specifically — it's still a multi-period
-    // rolling window (the Day tab became a single-day hourly view, see
-    // AdminController::ANALYTICS_GRANULARITIES).
+    // Two uploads 8 months apart (both inside the trailing 12-month
+    // window), with a silent month exactly between them — the chart must
+    // still render one row per month across the whole range, not just the
+    // two months something happened (the original bug this fixes). Year
+    // is the tab with monthly buckets now — Month buckets by day over a
+    // much shorter ~30-day window instead (see
+    // AdminController::ANALYTICS_GRANULARITIES's own docblock).
     analyticsDoc([
         'originator_id' => $originator->user_id, 'title' => 'gap-start.txt', 'file_path' => 'documents/gs.txt',
         'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
         'global_status' => 'processing', 'ml_category' => 'Job Order',
-    ], now()->subMonths(4));
+    ], now()->subMonths(8));
     analyticsDoc([
         'originator_id' => $originator->user_id, 'title' => 'gap-end.txt', 'file_path' => 'documents/ge.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+        'global_status' => 'processing', 'ml_category' => 'Job Order',
+    ], now());
+
+    $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'year', 'as_of' => now()->toDateString()]));
+
+    $response->assertOk();
+    // A zero-activity month exactly between the two uploads must still be
+    // present as a bucket (embedded in the chart's data-points payload).
+    $silentMonth = now()->subMonths(4)->format('Y-m');
+    $response->assertSee($silentMonth);
+});
+
+it('zero-fills the Month tab so every day in range appears, not just active ones', function () {
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+
+    // Two uploads 20 days apart (both inside the trailing ~1-month
+    // window), with a silent day exactly between them.
+    analyticsDoc([
+        'originator_id' => $originator->user_id, 'title' => 'day-gap-start.txt', 'file_path' => 'documents/dgs.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+        'global_status' => 'processing', 'ml_category' => 'Job Order',
+    ], now()->subDays(20));
+    analyticsDoc([
+        'originator_id' => $originator->user_id, 'title' => 'day-gap-end.txt', 'file_path' => 'documents/dge.txt',
         'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
         'global_status' => 'processing', 'ml_category' => 'Job Order',
     ], now());
@@ -103,10 +130,8 @@ it('zero-fills the analytics chart so every period in range appears, not just ac
     $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'month', 'as_of' => now()->toDateString()]));
 
     $response->assertOk();
-    // A zero-activity month exactly between the two uploads must still be
-    // present as a bucket (embedded in the chart's data-points payload).
-    $silentMonth = now()->subMonths(2)->format('Y-m');
-    $response->assertSee($silentMonth);
+    $silentDay = now()->subDays(10)->format('M j, Y');
+    $response->assertSee($silentDay);
 });
 
 it('shows the Day tab as a single day broken into hourly buckets, zero-filling silent hours', function () {
@@ -159,7 +184,7 @@ it('summarizes the Day tab KPI tiles from the whole day, not just the most recen
     $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
     $response->assertOk();
 
-    preg_match('/Uploaded<\/p>.*?tabular-nums">(\d+)</s', $response->getContent(), $matches);
+    preg_match('/Uploaded<\/p>.*?tabular-nums"[^>]*>(\d+)</s', $response->getContent(), $matches);
     expect($matches)->toHaveCount(2)
         ->and((int) $matches[1])->toBe(3);
 });
@@ -190,7 +215,7 @@ it('never lets the SLA Violation Rate KPI exceed 100%, even when one document ha
     $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
     $response->assertOk();
 
-    preg_match('/SLA VIOLATION RATE<\/p>.*?tabular-nums">([\d.]+)%/is', $response->getContent(), $matches);
+    preg_match('/SLA VIOLATION RATE<\/p>.*?tabular-nums"[^>]*>([\d.]+)%/is', $response->getContent(), $matches);
     expect($matches)->toHaveCount(2);
 
     $rate = (float) $matches[1];
@@ -239,7 +264,7 @@ it('excludes auto-approved documents from Avg. Time to Decide, since that gap is
     $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
     $response->assertOk();
 
-    preg_match('/AVG\. TIME TO DECIDE<\/p>.*?tabular-nums">([\w\s]+?)</is', $response->getContent(), $matches);
+    preg_match('/AVG\. TIME TO DECIDE<\/p>.*?tabular-nums"[^>]*>([\w\s]+?)</is', $response->getContent(), $matches);
     expect($matches)->toHaveCount(2);
 
     // 10 minutes — the human decision alone, not blended with the ~9-hour
@@ -275,4 +300,109 @@ it('still plots every period on the chart itself, all-zero ones included', funct
     // continuous line) — 3 AM, an all-zero hour, must still appear there
     // (embedded in the SVG's data-points payload).
     $response->assertOk()->assertSee('3:00 AM');
+});
+
+it('the chart readout line includes a Violated count, placed after Rejected', function () {
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    $approver = User::factory()->approver('Job Order')->create();
+
+    $this->travelTo(Carbon::parse('2026-08-10 10:00:00'));
+
+    // A document that auto-approved via a REAL missed deadline — the
+    // only path that logs an SlaViolation row (see SlaService::
+    // autoApproveApproverMiss()) — so this is the one document the
+    // "Violated" readout should count.
+    $violated = analyticsDoc([
+        'originator_id' => $originator->user_id, 'title' => 'violated.txt', 'file_path' => 'documents/v.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+        'global_status' => 'auto_approved', 'ml_category' => 'Job Order', 'updated_at' => now(),
+    ], now());
+    SlaViolation::create([
+        'document_id' => $violated->document_id, 'approver_id' => $approver->user_id,
+        'violation_timestamp' => now(), 'duration_overdue' => 15, 'stage_name' => 'Technical Review',
+    ]);
+
+    $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
+    $response->assertOk()->assertSee('Violated');
+
+    // Placed after Rejected in the readout, not between Auto Approved and
+    // Rejected — Uploaded/Approved/Auto Approved/Rejected are the parts
+    // that sum to the whole, Violated overlaps with Auto Approved instead
+    // of being a sibling slice of it.
+    $html = $response->getContent();
+    expect(strpos($html, 'Rejected'))->toBeLessThan(strpos($html, 'Violated'));
+});
+
+it('the readout line defaults to the whole window\'s totals, not whichever single bucket happens to be last', function () {
+    // Regression coverage for the real bug this was built to fix: the
+    // readout used to default to $latestPoint (literally the final hour
+    // of a Day view, or the most recent week/month/year bucket) — almost
+    // always empty/misleading on its own, completely disconnected from
+    // the KPI tiles' own whole-window aggregate sitting right above it.
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+
+    $this->travelTo(Carbon::parse('2026-08-10 23:30:00')); // late in the day — the final hour bucket is empty
+
+    foreach ([9, 11, 14] as $hour) {
+        analyticsDoc([
+            'originator_id' => $originator->user_id, 'title' => "gap-doc-$hour.txt", 'file_path' => "documents/gd-$hour.txt",
+            'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+            'global_status' => 'processing', 'ml_category' => 'Job Order',
+        ], now()->copy()->setTime($hour, 0));
+    }
+
+    $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'day', 'as_of' => now()->toDateString()]));
+
+    // The final hour (11 PM) has zero uploads — a bug reverted to showing
+    // that literal 0 by default. The readout must show the real total (3)
+    // instead, matching the Uploaded KPI tile right above it.
+    preg_match('/data-readout-uploaded>(\d+)</', $response->getContent(), $matches);
+    expect((int) $matches[1])->toBe(3);
+});
+
+it('Week/Month/Year each cover exactly the trailing window their name promises, today counted as day one', function () {
+    $admin = User::factory()->admin()->create();
+    $this->travelTo(Carbon::parse('2026-10-09 12:00:00'));
+
+    // Week: today back to 6 days ago = 7 real days total.
+    $week = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'week']));
+    $week->assertOk()->assertSee('Analytics for Oct 3, 2026 – Oct 9, 2026');
+
+    // Month: exactly one calendar month back from today (Sep 9), plus one
+    // day so today itself is the 1st day counted backward, same symmetry
+    // as Week above — not the 1st of the current month.
+    $month = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'month']));
+    $month->assertOk()->assertSee('Analytics for Sep 10, 2026 – Oct 9, 2026');
+
+    // Year: exactly one calendar year back from today, same +1 day
+    // symmetry — not Jan 1 of the current year.
+    $year = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'year']));
+    $year->assertOk()->assertSee('Analytics for Oct 10, 2025 – Oct 9, 2026');
+});
+
+it('the Year tab\'s current month is never silently dropped from the bucket list', function () {
+    // Regression coverage for a real confirmed bug: $since now lands on
+    // the 10th of a month (not the 1st, per the "today counted as day
+    // one" window math above), so stepping the bucket cursor by exactly 1
+    // month, 12 times, and comparing against $until's exact datetime
+    // overshot past it by a day on the final step — silently dropping the
+    // entire current month (and every real document uploaded in it) from
+    // the chart and the KPI tiles alike.
+    $admin = User::factory()->admin()->create();
+    $originator = User::factory()->originator()->create();
+    $this->travelTo(Carbon::parse('2026-10-09 12:00:00'));
+
+    analyticsDoc([
+        'originator_id' => $originator->user_id, 'title' => 'this-month.txt', 'file_path' => 'documents/tm.txt',
+        'mime_type' => 'text/plain', 'due_date' => now()->addDay(),
+        'global_status' => 'processing', 'ml_category' => 'Job Order',
+    ], Carbon::parse('2026-10-08 22:00:00'));
+
+    $response = $this->actingAs($admin)->get(route('admin.dashboard.analyticsPanel', ['granularity' => 'year']));
+
+    $response->assertOk()->assertSee('2026-10');
+    preg_match('/data-readout-uploaded>(\d+)</', $response->getContent(), $matches);
+    expect((int) $matches[1])->toBe(1);
 });

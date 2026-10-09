@@ -217,7 +217,7 @@ class AdminController extends Controller
      * panel: category volume and the current backlog — all-time/live
      * snapshots, deliberately not scoped to whatever Day/Week/Month/Year
      * tab or date filter the admin currently has the chart panel set to
-     * (see analyticsPanelData() below), since "how much is in flight
+     * (see analyticsRangeData() below), since "how much is in flight
      * right now" is more useful as a constant reference point than
      * something that resets depending on the chart's current filter.
      * Peak day/hour moved INTO the chart panel itself (see
@@ -245,7 +245,7 @@ class AdminController extends Controller
 
     /**
      * Which "peak" question actually makes sense at this granularity,
-     * scoped to the exact [$since, $until] window analyticsPanelData()
+     * scoped to the exact [$since, $until] window analyticsRangeData()
      * already computed for the chart itself — not the whole-history
      * snapshot analyticsSummary() used to show regardless of which tab
      * was selected (see that method's own updated docblock):
@@ -260,7 +260,7 @@ class AdminController extends Controller
      *
      * @return array<int, array{label: string, value: string}>
      */
-    private function analyticsPeak(string $unit, Carbon $since, Carbon $until): array
+    private function analyticsPeak(string $granularity, Carbon $since, Carbon $until): array
     {
         $uploadDates = DocumentRepository::whereBetween('upload_date', [$since, $until])->pluck('upload_date');
 
@@ -273,8 +273,14 @@ class AdminController extends Controller
             'value' => $this->formatHourRange12($uploadDates->countBy(fn ($d) => (int) $d->format('G'))->sortDesc()->keys()->first()),
         ];
 
-        return match ($unit) {
-            'hour' => [$peakHour()],
+        // Keyed on $granularity (the tab), not the chart's bucket size —
+        // Week and Month both bucket by day now (see ANALYTICS_PRESETS'
+        // own docblock) but still ask a different question here: Week's
+        // short 7-day window still benefits from "which day of the week"
+        // alongside the hour, while Month's longer ~30-day window asks for
+        // a specific calendar date instead.
+        return match ($granularity) {
+            'day' => [$peakHour()],
             'week' => [
                 ['label' => 'Peak upload day', 'value' => $uploadDates->countBy(fn ($d) => $d->format('l'))->sortDesc()->keys()->first()],
                 $peakHour(),
@@ -313,131 +319,203 @@ class AdminController extends Controller
      * A single day's hourly timeline doesn't have that skew: whatever
      * hours had activity are spread across the full width on their own
      * terms. label is "Hour" (each row IS an hour) but trend_label stays
-     * "day" (see analyticsPanelData() — the KPI tiles trend today's
+     * "day" (see analyticsRangeData() — the KPI tiles trend today's
      * totals against yesterday's, not one hour against the last).
      */
-    private const ANALYTICS_GRANULARITIES = [
-        'day' => ['unit' => 'hour', 'format' => 'H:00', 'count' => 24, 'label' => 'Hour', 'trend_label' => 'day'],
-        'week' => ['unit' => 'week', 'format' => 'o-\WW', 'count' => 12, 'label' => 'Week', 'trend_label' => 'week'],
-        'month' => ['unit' => 'month', 'format' => 'Y-m', 'count' => 12, 'label' => 'Month', 'trend_label' => 'month'],
-        'year' => ['unit' => 'year', 'format' => 'Y', 'count' => 5, 'label' => 'Year', 'trend_label' => 'year'],
+    // Purely how far back each preset's from/to spans — the ONE real
+    // computation (analyticsRangeData() below) decides bucket size itself
+    // from however long from/to actually turns out to be, so this no
+    // longer needs its own 'unit'/'format' fields the way the old
+    // per-tab-granularity system did. Day/Week/Month/Year are thin presets
+    // that fill in a from/to pair, same as picking one by hand — there is
+    // no second, parallel code path for them anymore.
+    private const ANALYTICS_PRESETS = [
+        'day' => ['unit' => 'day', 'count' => 1],
+        'week' => ['unit' => 'day', 'count' => 7],
+        'month' => ['unit' => 'month', 'count' => 1],
+        'year' => ['unit' => 'year', 'count' => 1],
     ];
 
     /**
-     * The ONE reusable Analytics chart panel's data (KPI tiles + chart
-     * rows) for a single granularity + reference date — this is the only
-     * method that computes chart data; switching the Day/Week/Month/Year
-     * tab or applying the date filter both just call this again with
-     * different arguments (see analyticsPanelRefresh() and dashboard()
-     * below), never a second, parallel computation.
+     * The from/to pair one of the four Day/Week/Month/Year presets means,
+     * anchored to $asOf — today counts as the 1st day/month/year back
+     * (matching how "last 7 days"/"last 30 days" are normally understood),
+     * not a calendar boundary (Week doesn't snap to Monday, Month doesn't
+     * snap to the 1st). subMonthsNoOverflow()/subYearsNoOverflow() (not
+     * subMonths()/subYears()) specifically avoid Carbon's end-of-month
+     * overflow bug (e.g. Mar 31 minus 1 month landing on Mar 3 instead of
+     * Feb 28).
      *
-     * $asOf defaults to "now" — the live, un-filtered view — and the
-     * window always ENDS at $asOf, not always at "today", so picking a
-     * past date re-anchors the whole rolling window to look back from
-     * that point instead.
+     * @return array{0: Carbon, 1: Carbon}
      */
-    private function analyticsPanelData(string $granularity, ?Carbon $asOf = null): array
+    private function presetRangeFor(string $granularity, Carbon $asOf): array
     {
-        $granularity = array_key_exists($granularity, self::ANALYTICS_GRANULARITIES) ? $granularity : 'day';
-        $cfg = self::ANALYTICS_GRANULARITIES[$granularity];
-        $asOf = ($asOf ?? now())->copy();
-
-        $until = match ($cfg['unit']) {
-            'hour' => $asOf->copy()->endOfDay(),
-            'week' => $asOf->copy()->endOfWeek(),
-            'month' => $asOf->copy()->endOfMonth(),
-            'year' => $asOf->copy()->endOfYear(),
-        };
-        $since = match ($cfg['unit']) {
-            'hour' => $asOf->copy()->startOfDay(),
-            'week' => $asOf->copy()->subWeeks($cfg['count'] - 1)->startOfWeek(),
-            'month' => $asOf->copy()->subMonths($cfg['count'] - 1)->startOfMonth(),
-            'year' => $asOf->copy()->subYears($cfg['count'] - 1)->startOfYear(),
+        $cfg = self::ANALYTICS_PRESETS[$granularity];
+        $from = match ($cfg['unit']) {
+            'day' => $asOf->copy()->subDays($cfg['count'] - 1),
+            'month' => $asOf->copy()->subMonthsNoOverflow($cfg['count'])->addDay(),
+            'year' => $asOf->copy()->subYearsNoOverflow($cfg['count'])->addDay(),
         };
 
-        $chartRows = $this->analyticsBuckets($cfg['unit'], $cfg['format'], $since, $until);
+        return [$from, $asOf->copy()];
+    }
 
-        // Every granularity's KPI tiles summarize the WHOLE visible window
-        // (all $cfg['count'] periods — e.g. the full trailing 12 weeks),
-        // trended against an equal-length window immediately before it —
-        // not just the single most-recent bucket trended against the one
-        // before that. A single bucket can easily be entirely empty (e.g.
-        // checking the dashboard right as a new week or month starts,
-        // before anything has happened in it yet) even though the window
-        // just before it was full of real activity, which would otherwise
-        // show "—" on every tile despite plenty of recent data existing.
-        // This generalizes what used to be Day-tab-only special-casing
-        // (the comment this replaced explained it for "hour" alone) to
-        // every tab, on the same reasoning.
-        $current = $this->analyticsAggregateRow($chartRows);
-
-        $previousSince = match ($cfg['unit']) {
-            'hour' => $since->copy()->subDay(),
-            'week' => $since->copy()->subWeeks($cfg['count']),
-            'month' => $since->copy()->subMonths($cfg['count']),
-            'year' => $since->copy()->subYears($cfg['count']),
-        };
-        $previousUntil = match ($cfg['unit']) {
-            'hour' => $until->copy()->subDay(),
-            'week' => $until->copy()->subWeeks($cfg['count']),
-            'month' => $until->copy()->subMonths($cfg['count']),
-            'year' => $until->copy()->subYears($cfg['count']),
-        };
-        $previous = $this->analyticsAggregateRow($this->analyticsBuckets($cfg['unit'], $cfg['format'], $previousSince, $previousUntil));
-
-        if ($cfg['unit'] === 'hour') {
-            // The raw "H:00" grouping key doesn't carry the actual calendar
-            // date and reads in 24-hour time — confusing on its own once
-            // you're looking at a specific chosen date rather than "today"
-            // by default. The chart hover, readout, and detail table all
-            // display $row->bucket directly, so rewriting it once here
-            // (into e.g. "Aug 8, 2026, 11:00 PM") fixes all three at once.
-            foreach ($chartRows as $row) {
-                $hour = (int) explode(':', $row->bucket)[0];
-                $row->bucket = $asOf->copy()->startOfDay()->addHours($hour)->format('M j, Y, g:i A');
-            }
-        } elseif ($cfg['unit'] === 'week') {
-            // Same reasoning as the hour rewrite above, for the same
-            // reason: the raw ISO grouping key ("2026-W37") is stable and
-            // sortable, which is all it needs to be for grouping, but
-            // it's not something anyone reads at a glance — nobody knows
-            // offhand which calendar days "week 37" covers. Rewritten
-            // into a real date span ("Sep 8–14, 2026") once here, same as
-            // the hour rewrite, so the chart hover/readout/detail table
-            // all pick it up without each needing their own conversion.
-            foreach ($chartRows as $row) {
-                [$isoYear, $isoWeek] = array_map('intval', explode('-W', $row->bucket));
-                $weekStart = Carbon::now()->setISODate($isoYear, $isoWeek)->startOfWeek(Carbon::MONDAY);
-                $weekEnd = $weekStart->copy()->addDays(6);
-                $row->bucket = $weekStart->isSameMonth($weekEnd)
-                    ? $weekStart->format('M j').'–'.$weekEnd->format('j, Y')
-                    : $weekStart->format('M j').'–'.$weekEnd->format('M j, Y');
-            }
+    /**
+     * The ONE reusable Analytics chart panel's data (KPI tiles + chart
+     * rows) for any from–to range — whether that range came from a
+     * genuinely hand-picked custom pair, or from one of the Day/Week/
+     * Month/Year presets being converted into its own from/to first (see
+     * resolveAnalyticsPanel()). Every caller ends up here; there is no
+     * second, parallel computation anywhere else.
+     *
+     * Bucket size is chosen from how long the range actually is, not from
+     * $granularityHint — a single day gets hourly points (same shape the
+     * old dedicated Day tab always had); up to a month gets daily points;
+     * up to a year gets monthly points; anything longer gets yearly
+     * points. Each threshold is picked so the chart never renders an
+     * unreadable number of points (e.g. 400 daily dots for an 18-month
+     * range) or a useless single flat one (one yearly dot for a 3-day
+     * range) — and because it's span-based rather than a hardcoded
+     * per-preset unit, the four presets above land on exactly the bucket
+     * size they always had (confirmed: Day's 1-day span is still always
+     * hourly, Year's ~365-day span is still always monthly, etc.) with no
+     * separate logic needed to keep them that way.
+     *
+     * $granularityHint is ONLY a label — which preset (if any) this range
+     * happens to represent, purely for the UI (which tab looks active,
+     * the Day tab's "Now" marker, the CSV filename, the "vs previous ___"
+     * trend tooltip) and backward-compatible requests (?granularity=
+     * week&as_of=... still resolves and labels correctly). Passing null
+     * (a genuinely custom pick) labels the result 'custom' and falls back
+     * to a generic "equivalent period" trend tooltip instead.
+     */
+    private function analyticsRangeData(Carbon $from, Carbon $to, ?string $granularityHint = null): array
+    {
+        // Swapped if given backwards — a human-entered pair of date inputs
+        // has no inherent ordering guarantee the way $since/$until always
+        // do everywhere else in this class.
+        if ($from->gt($to)) {
+            [$from, $to] = [$to, $from];
         }
 
-        // Shown as the heading on both the CSV download and the printed
-        // page (Feature: both need to say exactly what span they cover —
-        // see analyticsPanelDownload() and overview.blade.php's print
-        // button) — built from $since/$until, the same window
-        // analyticsBuckets() above was actually queried with, so this can
-        // never drift from what the data underneath it actually covers.
-        $title = 'Analytics for '.match ($cfg['unit']) {
-            'hour' => $asOf->format('F j, Y'),
-            'week' => $since->format('M j, Y').' – '.$until->format('M j, Y'),
-            'month' => $since->format('M Y').' – '.$until->format('M Y'),
-            'year' => $since->format('Y').' – '.$until->format('Y'),
+        $since = $from->copy()->startOfDay();
+        $until = $to->copy()->endOfDay();
+        // diffInDays() between a 00:00:00 and a 23:59:59 timestamp returns
+        // a float just under 1.0 (23h59m59s short of a full day), not a
+        // clean integer — diffing two start-of-day instants instead avoids
+        // that residue entirely (confirmed real: without this, a single
+        // selected day span came out as ~1.9999999999 instead of exactly
+        // 1, missing the "<= 1 day -> hourly buckets" threshold below and
+        // silently falling through to daily buckets for what should always
+        // be the Day tab's 24-hour view).
+        $spanDays = $since->diffInDays($until->copy()->startOfDay()) + 1;
+
+        [$unit, $format] = match (true) {
+            $spanDays <= 1 => ['hour', 'H:00'],
+            $spanDays <= 31 => ['day', 'Y-m-d'],
+            $spanDays <= 366 => ['month', 'Y-m'],
+            default => ['year', 'Y'],
+        };
+
+        $chartRows = $this->analyticsBuckets($unit, $format, $since, $until);
+
+        // The KPI tiles summarize the WHOLE visible range, trended against
+        // an equal-length range immediately before it — not just the
+        // single most-recent bucket trended against the one before that.
+        // A single bucket can easily be entirely empty (e.g. checking the
+        // dashboard right as a new day starts, before anything has
+        // happened in it yet) even though the range just before it was
+        // full of real activity, which would otherwise show "—" on every
+        // tile despite plenty of recent data existing.
+        $current = $this->analyticsAggregateRow($chartRows);
+
+        [$previousSince, $previousUntil] = $this->analyticsPreviousWindow($since, $until);
+        $previous = $this->analyticsAggregateRow($this->analyticsBuckets($unit, $format, $previousSince, $previousUntil));
+
+        $this->rewriteBucketLabels($chartRows, $unit, $since);
+
+        // A single-day range shows just that one date ("Oct 9, 2026"),
+        // same as the old dedicated Day tab always did — showing it as
+        // "Oct 9, 2026 – Oct 9, 2026" would be technically accurate but
+        // reads as a mistake, not a deliberate one-day pick.
+        $title = 'Analytics for '.($from->isSameDay($to)
+            ? $since->format('F j, Y')
+            : $since->format('M j, Y').' – '.$until->format('M j, Y'));
+
+        // Reuses whichever existing preset's peak QUESTION best matches
+        // this range's own bucket size when there's no explicit hint to
+        // go on, rather than a 5th peak flavor to maintain — an hourly-
+        // bucketed range (like Day) only makes sense to ask "which hour";
+        // a daily-bucketed one (like Month) asks "which date"; a monthly-
+        // bucketed one (like Year) asks "which month". A span long enough
+        // to bucket by year has no existing "which year was busiest"
+        // question defined, so it gets none, same as analyticsPeak()'s
+        // own default/no-match case.
+        $peakGranularity = $granularityHint ?? match ($unit) {
+            'hour' => 'day',
+            'day' => 'month',
+            'month' => 'year',
+            default => null,
         };
 
         return [
-            'granularity' => $granularity,
-            'label' => $cfg['label'],
-            'trend_label' => $cfg['trend_label'],
-            'as_of' => $asOf->toDateString(),
+            'granularity' => $granularityHint ?? 'custom',
+            'label' => match ($unit) {
+                'hour' => 'Hour', 'day' => 'Day', 'month' => 'Month', default => 'Year',
+            },
+            'trend_label' => $granularityHint ?? 'equivalent period',
+            'as_of' => $to->toDateString(),
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
             'title' => $title,
-            'peak' => $this->analyticsPeak($cfg['unit'], $since, $until),
+            'peak' => $peakGranularity ? $this->analyticsPeak($peakGranularity, $since, $until) : [],
             'chart_rows' => $chartRows,
             'kpi' => $this->analyticsKpis($current, $previous),
         ];
+    }
+
+    /**
+     * The immediately preceding window of the SAME real length as
+     * [$since, $until] — used for every granularity's (and the custom
+     * range's) trend comparison. Computed generically from however many
+     * days the window actually spans, rather than a per-unit case, so it
+     * can never drift out of sync with however the window itself ended up
+     * being computed.
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function analyticsPreviousWindow(Carbon $since, Carbon $until): array
+    {
+        // Same start-of-day-vs-start-of-day diff as analyticsRangeData()'s
+        // own $spanDays, and for the identical reason — diffing against
+        // $until directly (usually an end-of-day 23:59:59 instant) returns
+        // a float just under a whole day short, which then feeds a
+        // fractional count into subDays() below.
+        $windowDays = $since->diffInDays($until->copy()->startOfDay()) + 1;
+        $previousUntil = $since->copy()->subDay()->endOfDay();
+        $previousSince = $previousUntil->copy()->subDays($windowDays - 1)->startOfDay();
+
+        return [$previousSince, $previousUntil];
+    }
+
+    /**
+     * Rewrites each row's raw grouping key into something a human actually
+     * reads at a glance — "H:00" (24-hour, no date) into "Aug 8, 2026,
+     * 11:00 PM"; "Y-m-d" into "Oct 3, 2026". $dayAnchor is whichever day
+     * the hourly buckets belong to (irrelevant for every other unit).
+     */
+    private function rewriteBucketLabels(array $chartRows, string $unit, Carbon $dayAnchor): void
+    {
+        if ($unit === 'hour') {
+            foreach ($chartRows as $row) {
+                $hour = (int) explode(':', $row->bucket)[0];
+                $row->bucket = $dayAnchor->copy()->startOfDay()->addHours($hour)->format('M j, Y, g:i A');
+            }
+        } elseif ($unit === 'day') {
+            foreach ($chartRows as $row) {
+                $row->bucket = Carbon::createFromFormat('Y-m-d', $row->bucket)->format('M j, Y');
+            }
+        }
     }
 
     /**
@@ -528,12 +606,22 @@ class AdminController extends Controller
         $current = $summarize($currentRow);
         $previous = $summarize($previousRow);
 
+        // A plain difference in the metric's own unit — NOT a relative
+        // percent change. For the four rate tiles this gives a
+        // percentage-POINT difference (e.g. 100% vs 78% -> "+22", not
+        // "+28.5%"), which is the real size of the move and needs no
+        // "percent of a percent" mental conversion to read. For Uploaded
+        // (a count) and Avg. Time to Decide (minutes) it's just the raw
+        // difference, same reasoning. No div-by-zero guard needed anymore
+        // either, since this never divides — a previous value of exactly
+        // 0 (e.g. yesterday had a 0% rejection rate) now correctly shows
+        // as a real "+N" move instead of being silently suppressed.
         $trendOf = function (string $metric) use ($current, $previous) {
-            if (! $current || ! $previous || $current[$metric] === null || $previous[$metric] === null || $previous[$metric] == 0) {
+            if (! $current || ! $previous || $current[$metric] === null || $previous[$metric] === null) {
                 return null;
             }
 
-            return round((($current[$metric] - $previous[$metric]) / $previous[$metric]) * 100, 1);
+            return round($current[$metric] - $previous[$metric], 1);
         };
 
         return [
@@ -555,7 +643,7 @@ class AdminController extends Controller
      * — a continuous timeline is what makes the line chart actually read
      * as a trend; skipping empty periods would make it jump between
      * non-adjacent points as if they were consecutive. $unit is a Carbon
-     * add*()-compatible unit name ('hour'/'week'/'month'/'year') used to
+     * add*()-compatible unit name ('hour'/'day'/'month'/'year') used to
      * step from $since to $until.
      */
     private function analyticsBuckets(string $unit, string $carbonFormat, Carbon $since, Carbon $until): array
@@ -599,13 +687,37 @@ class AdminController extends Controller
         $violatedDocIds = SlaViolation::whereIn('document_id', $decidedDocIds)
             ->pluck('document_id')->unique()->flip();
 
+        // 'month'/'year' step from a calendar-aligned cursor (start of
+        // month/year), compared against $until's own aligned boundary —
+        // not $since/$until's exact datetimes. Those are now a rolling
+        // window that rarely starts on the 1st (e.g. Year's $since lands
+        // on "the same date last year, +1 day" — the 10th of a month, not
+        // the 1st): stepping by exactly 1 month from a mid-month start and
+        // comparing against an exact end datetime overshoots past $until
+        // by up to a day on the final step, silently dropping the whole
+        // last calendar month/year from the bucket list — confirmed real
+        // (the current month was missing entirely, with all of that
+        // month's real activity along with it). 'hour'/'day' don't have
+        // this problem — $since is already computed as an exact multiple
+        // of hours/days before $until, so stepping by 1 always lands
+        // exactly on $until with no drift — and keep the simpler, exact
+        // comparison.
         $bucketKeys = [];
-        $cursor = $since->copy();
-        while ($cursor->lte($until)) {
+        $cursor = match ($unit) {
+            'month' => $since->copy()->startOfMonth(),
+            'year' => $since->copy()->startOfYear(),
+            default => $since->copy(),
+        };
+        $boundary = match ($unit) {
+            'month' => $until->copy()->startOfMonth(),
+            'year' => $until->copy()->startOfYear(),
+            default => $until,
+        };
+        while ($cursor->lte($boundary)) {
             $bucketKeys[] = $cursor->format($carbonFormat);
             $cursor = match ($unit) {
                 'hour' => $cursor->addHour(),
-                'week' => $cursor->addWeek(),
+                'day' => $cursor->addDay(),
                 'month' => $cursor->addMonth(),
                 'year' => $cursor->addYear(),
             };
@@ -655,17 +767,47 @@ class AdminController extends Controller
 
     /** Admin control-center overview. */
     /**
-     * Reads the analytics panel's requested granularity/as-of date off the
-     * request — shared by dashboard() (so a bookmarked/shared URL with
-     * ?granularity=&as_of= renders that exact view on first load, not
-     * always the default) and analyticsPanelRefresh() (the AJAX swap).
-     * Invalid/missing granularity falls back to 'day'; invalid/missing
-     * as_of falls back to null (analyticsPanelData() then defaults to now()).
+     * Resolves the analytics panel's data for whatever the request asked
+     * for — shared by dashboard() (so a bookmarked/shared URL with
+     * ?from=&to=[&granularity=] or the old-style ?granularity=&as_of=
+     * renders that exact view on first load, not always the default),
+     * analyticsPanelRefresh() (the AJAX swap), and analyticsPanelDownload()
+     * (the CSV), so all three can never disagree about which panel the
+     * admin actually has open. An explicit from/to pair always wins when
+     * present (with or without a granularity hint alongside it); missing
+     * or unparseable from/to falls back to the old-style granularity+as_of
+     * shorthand, which itself defaults to today's Day preset.
      */
-    private function analyticsPanelRequestArgs(Request $request): array
+    private function resolveAnalyticsPanel(Request $request): array
     {
-        $granularity = $request->string('granularity')->toString();
-        $granularity = array_key_exists($granularity, self::ANALYTICS_GRANULARITIES) ? $granularity : 'day';
+        $rawGranularity = $request->string('granularity')->toString();
+        // Only used as a label/hint (see analyticsRangeData()'s own
+        // docblock) — never decides the actual computation, so an invalid
+        // value here just means "no hint", not "fall back to Day".
+        $hint = array_key_exists($rawGranularity, self::ANALYTICS_PRESETS) ? $rawGranularity : null;
+
+        // An explicit from/to pair always wins when present — this is how
+        // the frontend's Day/Week/Month/Year preset buttons themselves now
+        // request data (they fill these in and send the matching $hint
+        // alongside, see overview.blade.php/dashboard.blade.php), same as
+        // a genuinely hand-picked custom range with no hint at all.
+        if ($request->filled('from') && $request->filled('to')) {
+            try {
+                return $this->analyticsRangeData(
+                    Carbon::parse($request->string('from')->toString()),
+                    Carbon::parse($request->string('to')->toString()),
+                    $hint,
+                );
+            } catch (\Exception) {
+                // Falls through to the Day-preset default below.
+            }
+        }
+
+        // Backward-compatible shorthand (?granularity=week&as_of=...) —
+        // still supported for a bookmarked/shared old-style link, resolved
+        // into the exact same from/to pair the matching preset button
+        // would have sent, then handed to the one real computation above.
+        $granularity = $hint ?? 'day';
 
         $asOf = null;
         if ($request->filled('as_of')) {
@@ -675,8 +817,11 @@ class AdminController extends Controller
                 $asOf = null;
             }
         }
+        $asOf ??= now();
 
-        return [$granularity, $asOf];
+        [$from, $to] = $this->presetRangeFor($granularity, $asOf);
+
+        return $this->analyticsRangeData($from, $to, $granularity);
     }
 
     public function dashboard(Request $request)
@@ -686,8 +831,7 @@ class AdminController extends Controller
         $activeModel = MlModelRepository::active();
         $modelHistory = $this->modelHistory();
 
-        [$granularity, $asOf] = $this->analyticsPanelRequestArgs($request);
-        $panel = $this->analyticsPanelData($granularity, $asOf);
+        $panel = $this->resolveAnalyticsPanel($request);
 
         return view('admin.dashboard', compact(
             'stats', 'autoApprovalAlerts', 'reviewCount', 'activeModel', 'modelHistory',
@@ -715,13 +859,12 @@ class AdminController extends Controller
      * whenever the admin changes the Day/Week/Month/Year tab or applies
      * the date filter, swapping in place instead of a page reload (see
      * the script in admin/partials/overview.blade.php). Same data method
-     * as the initial page load (analyticsPanelData()), just returning the
+     * as the initial page load (resolveAnalyticsPanel()), just returning the
      * panel fragment instead of the whole dashboard.
      */
     public function analyticsPanelRefresh(Request $request)
     {
-        [$granularity, $asOf] = $this->analyticsPanelRequestArgs($request);
-        $panel = $this->analyticsPanelData($granularity, $asOf);
+        $panel = $this->resolveAnalyticsPanel($request);
 
         return view('admin.partials.analytics-panel', compact('panel'));
     }
@@ -739,8 +882,7 @@ class AdminController extends Controller
      */
     public function analyticsPanelDownload(Request $request): StreamedResponse
     {
-        [$granularity, $asOf] = $this->analyticsPanelRequestArgs($request);
-        $panel = $this->analyticsPanelData($granularity, $asOf);
+        $panel = $this->resolveAnalyticsPanel($request);
 
         $filename = "doctrack-analytics-{$panel['granularity']}-{$panel['as_of']}.csv";
 

@@ -117,6 +117,8 @@
         'uploaded' => $row->uploaded, 'uploadedY' => $uploadedPoints[$i]['y'],
         'approved' => $row->human_approved, 'approvedY' => $approvedPoints[$i]['y'],
         'autoApproved' => $row->auto_approved, 'autoApprovedY' => $autoApprovedPoints[$i]['y'],
+        'violatedDocuments' => $row->violated_documents,
+        'avgMinutes' => $row->avg_minutes,
         'rejected' => $row->rejected, 'rejectedY' => $rejectedPoints[$i]['y'],
     ])->all();
     $latestPoint = $jsPoints[count($jsPoints) - 1] ?? null;
@@ -129,19 +131,19 @@
     // means "no inherent good/bad direction" (e.g. auto-approval rate is
     // informative, not a target to chase up or down), so its arrow stays neutral.
     $tiles = [
-        ['label' => 'Uploaded', 'value' => $kpi['current']['uploaded'] ?? null, 'trend' => $kpi['trend']['uploaded'] ?? null, 'format' => 'count', 'good' => 'up', 'description' => 'How many documents were submitted during this period.'],
-        ['label' => 'Approval Rate', 'value' => $kpi['current']['approval_rate'] ?? null, 'trend' => $kpi['trend']['approval_rate'] ?? null, 'format' => 'percent', 'good' => 'up', 'description' => 'Share of decided documents approved by a person — excludes auto-approvals, see Auto-Approval Rate for those.'],
-        ['label' => 'Auto-Approval Rate', 'value' => $kpi['current']['auto_approval_rate'] ?? null, 'trend' => $kpi['trend']['auto_approval_rate'] ?? null, 'format' => 'percent', 'good' => null, 'description' => 'Share of approvals the system made automatically because nobody acted in time.'],
-        ['label' => 'Rejection Rate', 'value' => $kpi['current']['rejection_rate'] ?? null, 'trend' => $kpi['trend']['rejection_rate'] ?? null, 'format' => 'percent', 'good' => 'down', 'description' => 'Share of decided documents that were rejected. Together, Approval Rate + Auto-Approval Rate + Rejection Rate add up to 100% of decided documents.'],
-        ['label' => 'Avg. Time to Decide', 'value' => $kpi['current']['avg_minutes'] ?? null, 'trend' => $kpi['trend']['avg_minutes'] ?? null, 'format' => 'duration', 'good' => 'down', 'description' => 'Average time from upload to a final decision in this period.'],
-        ['label' => 'SLA Violation Rate', 'value' => $kpi['current']['sla_violation_rate'] ?? null, 'trend' => $kpi['trend']['sla_violation_rate'] ?? null, 'format' => 'percent', 'good' => 'down', 'description' => 'Share of decisions that missed their SLA deadline.'],
+        ['key' => 'uploaded', 'label' => 'Uploaded', 'value' => $kpi['current']['uploaded'] ?? null, 'trend' => $kpi['trend']['uploaded'] ?? null, 'format' => 'count', 'good' => 'up', 'description' => 'How many documents were submitted during this period.'],
+        ['key' => 'approval_rate', 'label' => 'Approval Rate', 'value' => $kpi['current']['approval_rate'] ?? null, 'trend' => $kpi['trend']['approval_rate'] ?? null, 'format' => 'percent', 'good' => 'up', 'description' => 'Share of decided documents approved by a person — excludes auto-approvals, see Auto-Approval Rate for those.'],
+        ['key' => 'auto_approval_rate', 'label' => 'Auto-Approval Rate', 'value' => $kpi['current']['auto_approval_rate'] ?? null, 'trend' => $kpi['trend']['auto_approval_rate'] ?? null, 'format' => 'percent', 'good' => null, 'description' => 'Share of approvals the system made automatically because nobody acted in time.'],
+        ['key' => 'rejection_rate', 'label' => 'Rejection Rate', 'value' => $kpi['current']['rejection_rate'] ?? null, 'trend' => $kpi['trend']['rejection_rate'] ?? null, 'format' => 'percent', 'good' => 'down', 'description' => 'Share of decided documents that were rejected. Together, Approval Rate + Auto-Approval Rate + Rejection Rate add up to 100% of decided documents.'],
+        ['key' => 'avg_minutes', 'label' => 'Avg. Time to Decide', 'value' => $kpi['current']['avg_minutes'] ?? null, 'trend' => $kpi['trend']['avg_minutes'] ?? null, 'format' => 'duration', 'good' => 'down', 'description' => 'Average time from upload to a final decision in this period.'],
+        ['key' => 'sla_violation_rate', 'label' => 'SLA Violation Rate', 'value' => $kpi['current']['sla_violation_rate'] ?? null, 'trend' => $kpi['trend']['sla_violation_rate'] ?? null, 'format' => 'percent', 'good' => 'down', 'description' => 'Share of decisions that missed their SLA deadline.'],
     ];
 @endphp
 {{-- No id here — the persistent id lives on the wrapper in overview.blade.php that never gets replaced; this root is the swap payload itself, identified instead by its data attributes so the dashboard script can read back the state it just rendered. --}}
 {{-- data-title: read by printAnalyticsPanel() in dashboard.blade.php at
      print-click time — see that function's own docblock for why it's
      read fresh from here rather than tracked separately in JS. --}}
-<div class="analytics-panel-content" data-granularity="{{ $panel['granularity'] }}" data-as-of="{{ $panel['as_of'] }}" data-title="{{ $panel['title'] }}">
+<div class="analytics-panel-content" data-granularity="{{ $panel['granularity'] }}" data-as-of="{{ $panel['as_of'] }}" data-title="{{ $panel['title'] }}" data-from="{{ $panel['from'] ?? '' }}" data-to="{{ $panel['to'] ?? '' }}">
     {{-- Which "peak" question is shown depends on the tab — see
          AdminController::analyticsPeak()'s own docblock for why Day only
          gets an hour, Week gets both a day and an hour, Month gets a
@@ -156,9 +158,17 @@
         </div>
     @endif
 
-    {{-- KPI tiles: this period's headline numbers, with a % trend against
-         the immediately preceding period — the scannable summary a chart
-         alone can't give you at a glance. --}}
+    {{-- KPI tiles: this period's headline numbers, with a plain difference
+         (in the metric's own unit — points for a rate, not a relative %)
+         against the immediately preceding period. Hovering the chart below
+         swaps these to whatever single point the cursor is nearest (see
+         dashboard.blade.php's applyKpiTiles()) — alongside, not instead of,
+         the Uploaded/Approved/.../Violated readout line further down, which
+         keeps its own existing behavior unchanged. $kpiAggregate is exactly
+         what the tiles snap back to on mouseout: the same pre-formatted
+         strings rendered here, not recomputed client-side, so a revert can
+         never drift from what PHP actually calculated. --}}
+    @php $kpiAggregate = []; @endphp
     <div class="px-5 pt-3 grid grid-cols-3 sm:grid-cols-6 gap-2">
         @foreach($tiles as $tile)
             @php
@@ -171,6 +181,22 @@
                     'duration' => $tile['value'] !== null ? \Carbon\CarbonInterval::minutes($tile['value'])->cascade()->forHumans(['short' => true]) : '—',
                     default => $tile['value'] !== null ? number_format($tile['value']) : '—',
                 };
+                // Plain difference, formatted in the metric's own unit —
+                // "pts" for a rate (never "%", that's the relative-change
+                // reading this replaced), a short duration for the time
+                // tile, nothing for a bare count.
+                $trendDisplay = $tile['trend'] === null ? null : match ($tile['format']) {
+                    'percent' => number_format(abs($tile['trend']), 1) . ' pts',
+                    'duration' => \Carbon\CarbonInterval::minutes((int) round(abs($tile['trend'])))->cascade()->forHumans(['short' => true]),
+                    default => number_format(abs($tile['trend'])),
+                };
+                $kpiAggregate[$tile['key']] = [
+                    'value' => $displayValue,
+                    'trend' => $trendDisplay,
+                    'trendUp' => $trendUp,
+                    'trendDown' => $trendDown,
+                    'trendColor' => $trendColor,
+                ];
             @endphp
             {{-- data-kpi-tooltip reuses the exact same shared tooltip
                  element/listener the Control Center's 5 KPI cards already
@@ -180,21 +206,17 @@
             <div class="rounded-lg border border-surface-200 bg-surface-50/50 px-3 py-2" data-kpi-tooltip="{{ $tile['description'] }}">
                 <p class="text-[11px] font-medium text-surface-500 uppercase tracking-wide truncate">{{ $tile['label'] }}</p>
                 <div class="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
-                    <span class="text-lg font-semibold text-surface-900 tabular-nums">{{ $displayValue }}</span>
-                    @if($tile['trend'] !== null)
-                        <span class="text-xs font-medium {{ $trendColor }} inline-flex items-center gap-0.5" title="vs previous {{ $panel['trend_label'] }}">
-                            @if($trendUp)
-                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/></svg>
-                            @elseif($trendDown)
-                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                            @endif
-                            {{ number_format(abs($tile['trend']), 1) }}%
-                        </span>
-                    @endif
+                    <span class="text-lg font-semibold text-surface-900 tabular-nums" data-kpi-value="{{ $tile['key'] }}">{{ $displayValue }}</span>
+                    <span class="text-xs font-medium {{ $trendColor }} inline-flex items-center gap-0.5" data-kpi-trend="{{ $tile['key'] }}" title="vs previous {{ $panel['trend_label'] }}" style="{{ $tile['trend'] === null ? 'display:none' : '' }}">
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" data-kpi-trend-up style="{{ $trendUp ? '' : 'display:none' }}"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/></svg>
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" data-kpi-trend-down style="{{ $trendDown ? '' : 'display:none' }}"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                        <span data-kpi-trend-text>{{ $trendDisplay }}</span>
+                    </span>
                 </div>
             </div>
         @endforeach
     </div>
+    <div class="hidden" data-kpi-aggregate-json>{{ json_encode($kpiAggregate) }}</div>
 
     {{-- Continuous line chart: uploaded / approved / rejected per period,
          every period in range plotted (zero-filled where nothing
@@ -223,18 +245,55 @@
             <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-processing-500 inline-block"></span>Auto Approved</span>
             <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rejected-500 inline-block"></span>Rejected</span>
         </div>
+        @php
+            // The readout's own default (no hover) snapshot — the WHOLE
+            // visible window's totals, not one single bucket. Summed
+            // straight from $chartRows the same way analyticsAggregateRow()
+            // sums them for the KPI tiles, so this can never disagree with
+            // what the tiles above are showing. Embedded as JSON below too,
+            // so the mouseout handler can revert here instead of to
+            // whichever bucket happens to be last (e.g. an empty final
+            // hour of a Day view still in progress) — the original bug
+            // this whole thing started from.
+            $aggregateReadout = [
+                'bucket' => $panel['title'],
+                'uploaded' => collect($chartRows)->sum('uploaded'),
+                'approved' => collect($chartRows)->sum('human_approved'),
+                'autoApproved' => collect($chartRows)->sum('auto_approved'),
+                'rejected' => collect($chartRows)->sum('rejected'),
+                'violatedDocuments' => collect($chartRows)->sum('violated_documents'),
+            ];
+        @endphp
         @if($latestPoint)
             <div data-analytics-readout class="text-xs font-medium text-surface-700 tabular-nums">
-                <span data-readout-date>{{ $latestPoint['bucket'] }}</span>
+                <span data-readout-date>{{ $aggregateReadout['bucket'] }}</span>
                 <span class="text-surface-400 font-normal">·</span>
-                Uploaded <span class="text-primary-700 font-semibold" data-readout-uploaded>{{ $latestPoint['uploaded'] }}</span>
+                Uploaded <span class="text-primary-700 font-semibold" data-readout-uploaded>{{ $aggregateReadout['uploaded'] }}</span>
                 <span class="text-surface-400 font-normal">·</span>
-                Approved <span class="text-approved-700 font-semibold" data-readout-approved>{{ $latestPoint['approved'] }}</span>
+                Approved <span class="text-approved-700 font-semibold" data-readout-approved>{{ $aggregateReadout['approved'] }}</span>
                 <span class="text-surface-400 font-normal">·</span>
-                Auto Approved <span class="text-processing-700 font-semibold" data-readout-autoapproved>{{ $latestPoint['autoApproved'] }}</span>
+                Auto Approved <span class="text-processing-700 font-semibold" data-readout-autoapproved>{{ $aggregateReadout['autoApproved'] }}</span>
                 <span class="text-surface-400 font-normal">·</span>
-                Rejected <span class="text-rejected-700 font-semibold" data-readout-rejected>{{ $latestPoint['rejected'] }}</span>
+                Rejected <span class="text-rejected-700 font-semibold" data-readout-rejected>{{ $aggregateReadout['rejected'] }}</span>
+                <span class="text-surface-400 font-normal">·</span>
+                {{-- Documents with >=1 real SLA violation logged against them
+                     (see AdminController::analyticsBuckets()'s own
+                     'violated_documents' docblock) — distinct from the Auto
+                     Approved count above: a document can auto-approve
+                     without a human-missed violation (no eligible approver
+                     existed — see SlaService's AdminViolation path), and a
+                     violated document doesn't always end up auto-approved
+                     overall if a later stage still gets a human decision.
+                     Placed last, after Rejected, rather than between Auto
+                     Approved and Rejected — Uploaded/Approved/Auto
+                     Approved/Rejected are the parts that sum to the whole
+                     (uploaded total; decided total = approved + auto
+                     approved + rejected), while Violated overlaps with Auto
+                     Approved instead of being a sibling slice of it, so it
+                     sits apart from that group rather than inside it. --}}
+                Violated <span class="text-processing-800 font-semibold" data-readout-violated>{{ $aggregateReadout['violatedDocuments'] }}</span>
             </div>
+            <div class="hidden" data-readout-aggregate-json>{{ json_encode($aggregateReadout) }}</div>
         @endif
     </div>
     <div class="px-5 pt-2">

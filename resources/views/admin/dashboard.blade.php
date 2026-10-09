@@ -148,14 +148,38 @@
         // etc. to update live (see AdminActivityLogged).
         startLiveChannel('admin-dashboard', '.admin.activity-logged', opts);
 
-        // The ONE reusable Analytics chart/KPI/table panel: the admin's
-        // currently-selected Day/Week/Month/Year granularity + date filter
-        // is tracked here in JS and fetched from the server on demand —
-        // never four pre-rendered panels toggled by CSS. Seeded from
+        // The ONE reusable Analytics chart/KPI/table panel: a from/to range
+        // is the only real scope it understands now (see AdminController::
+        // analyticsRangeData()) — Day/Week/Month/Year are presets that
+        // fill these two in rather than their own separate mode, so there
+        // is exactly one pair of dates to track, not three. analyticsTab
+        // is purely a label (which preset, if any, this from/to happens to
+        // match — null once the admin hand-edits either field) sent
+        // alongside purely so the backend can echo back which tab should
+        // look active; it never changes what gets computed. Seeded from
         // whatever the initial dashboard() load already rendered so
         // switching tabs immediately doesn't refetch the default view first.
-        let analyticsGranularity = overviewEl.querySelector('.analytics-panel-content')?.dataset.granularity || 'day';
-        let analyticsAsOf = overviewEl.querySelector('.analytics-panel-content')?.dataset.asOf || null;
+        let analyticsTab = overviewEl.querySelector('.analytics-panel-content')?.dataset.granularity || 'day';
+        let analyticsFrom = overviewEl.querySelector('.analytics-panel-content')?.dataset.from || overviewEl.querySelector('#analytics-from-filter')?.value || null;
+        let analyticsTo = overviewEl.querySelector('.analytics-panel-content')?.dataset.to || overviewEl.querySelector('#analytics-to-filter')?.value || null;
+        if (analyticsTab === 'custom') analyticsTab = null;
+
+        // The Day/Week/Month/Year preset buttons' own from/to, anchored to
+        // TODAY — a plain day-count back for Week/Month/Year (7/30/365
+        // days) rather than exact calendar-month/year arithmetic, since
+        // this only has to fill in a reasonable starting pair for the two
+        // fields the admin can see and still freely adjust; the backend's
+        // own presetRangeFor() is what actually computes the authoritative
+        // version when a request arrives with no from/to at all (e.g. an
+        // old bookmarked ?granularity=month link).
+        function presetRangeFor(tab) {
+            const to = new Date();
+            const from = new Date(to);
+            const daysBack = { day: 0, week: 6, month: 29, year: 364 }[tab] ?? 0;
+            from.setDate(from.getDate() - daysBack);
+            const iso = (d) => d.toISOString().slice(0, 10);
+            return [iso(from), iso(to)];
+        }
 
         // Bug fix (2026-10-08): nothing stopped Day/Week/Month/Year being
         // clicked faster than the previous fetch for this same panel had
@@ -176,8 +200,9 @@
             if (!panelEl) return;
 
             const url = new URL(panelEl.dataset.refreshUrl, window.location.origin);
-            url.searchParams.set('granularity', analyticsGranularity);
-            if (analyticsAsOf) url.searchParams.set('as_of', analyticsAsOf);
+            if (analyticsFrom) url.searchParams.set('from', analyticsFrom);
+            if (analyticsTo) url.searchParams.set('to', analyticsTo);
+            if (analyticsTab) url.searchParams.set('granularity', analyticsTab);
 
             analyticsRequestInFlight = true;
 
@@ -215,27 +240,27 @@
         // live refresh (same reason the tab-click listener below is
         // delegated, not bound directly), and that fragment's own $panel
         // resets to today/Day on every such swap (see overview.blade.
-        // php's own comment on this). Reading analyticsGranularity/
-        // analyticsAsOf from THIS closure instead — the one thing that
-        // actually stays in sync with whatever the admin has selected,
-        // live refreshes included — is what keeps the download matching
-        // what's on screen. Exposed on window so the inline onclick=""
-        // on the (replaceable) button can still reach this closure's
-        // own state.
+        // php's own comment on this). Reading analyticsFrom/analyticsTo
+        // from THIS closure instead — the one thing that actually stays
+        // in sync with whatever the admin has selected, live refreshes
+        // included — is what keeps the download matching what's on
+        // screen. Exposed on window so the inline onclick="" on the
+        // (replaceable) button can still reach this closure's own state.
         function downloadAnalyticsCsv() {
             const panelEl = overviewEl.querySelector('#analytics-panel');
             if (!panelEl) return;
 
             const url = new URL(panelEl.dataset.downloadUrl, window.location.origin);
-            url.searchParams.set('granularity', analyticsGranularity);
-            if (analyticsAsOf) url.searchParams.set('as_of', analyticsAsOf);
+            if (analyticsFrom) url.searchParams.set('from', analyticsFrom);
+            if (analyticsTo) url.searchParams.set('to', analyticsTo);
+            if (analyticsTab) url.searchParams.set('granularity', analyticsTab);
             window.location = url;
         }
         window.downloadAnalyticsCsv = downloadAnalyticsCsv;
 
         // Feature: a title naming the exact span on the printed page,
         // matching the one the CSV download gets (see AdminController::
-        // analyticsPanelData()'s own $title). __printClone() only ever
+        // analyticsRangeData()'s own $title). __printClone() only ever
         // clones whatever element it's handed, so the title is prepended
         // onto a throwaway wrapper around a COPY of the live panel here,
         // rather than needing a permanently-visible (and redundant, next
@@ -272,20 +297,55 @@
             const btn = e.target.closest('.analytics-tab-btn');
             if (!btn || !overviewEl.contains(btn)) return;
 
-            analyticsGranularity = btn.dataset.analyticsTab;
+            analyticsTab = btn.dataset.analyticsTab;
             overviewEl.querySelectorAll('.analytics-tab-btn').forEach((b) => {
                 b.classList.toggle('bg-primary-700', b === btn);
                 b.classList.toggle('text-white', b === btn);
                 b.classList.toggle('text-surface-600', b !== btn);
             });
+
+            // Fill the From/To fields with this preset's own range (see
+            // presetRangeFor() above) — these two fields are the only real
+            // scope the backend understands now, the tab is just a quick
+            // way to set them.
+            [analyticsFrom, analyticsTo] = presetRangeFor(analyticsTab);
+            const fromEl = overviewEl.querySelector('#analytics-from-filter');
+            const toEl = overviewEl.querySelector('#analytics-to-filter');
+            if (fromEl) fromEl.value = analyticsFrom;
+            if (toEl) toEl.value = analyticsTo;
+
             loadAnalyticsPanel();
         });
 
         overviewEl.addEventListener('change', function (e) {
-            const input = e.target.closest('#analytics-date-filter');
-            if (!input || !overviewEl.contains(input)) return;
+            const fromInput = e.target.closest('#analytics-from-filter');
+            const toInput = e.target.closest('#analytics-to-filter');
+            if ((!fromInput && !toInput) || !overviewEl.contains(e.target)) return;
 
-            analyticsAsOf = input.value || null;
+            // Keep "from" from ever being dragged past "to" and vice versa
+            // — the backend already swaps a backwards pair (see
+            // AdminController::analyticsRangeData()), but catching it here
+            // keeps what's on screen from silently disagreeing with what
+            // the fetched data actually covers.
+            const fromEl = overviewEl.querySelector('#analytics-from-filter');
+            const toEl = overviewEl.querySelector('#analytics-to-filter');
+            if (fromInput && toEl.value && fromEl.value > toEl.value) toEl.value = fromEl.value;
+            if (toInput && fromEl.value && toEl.value < fromEl.value) fromEl.value = toEl.value;
+
+            analyticsFrom = fromEl.value || null;
+            analyticsTo = toEl.value || null;
+
+            // A hand edit to either field means this no longer necessarily
+            // matches any preset — drop the tab hint and let the backend
+            // label the result 'custom' (see analyticsRangeData()'s own
+            // docblock); no tab stays highlighted once the admin has
+            // adjusted the dates themselves.
+            analyticsTab = null;
+            overviewEl.querySelectorAll('.analytics-tab-btn').forEach((b) => {
+                b.classList.remove('bg-primary-700', 'text-white');
+                b.classList.add('text-surface-600');
+            });
+
             loadAnalyticsPanel();
         });
 
@@ -312,7 +372,64 @@
             return nearest;
         }
 
-        function applyAnalyticsPoint(svg, point) {
+        // Formats one hovered point's raw counts into the same 6 metrics
+        // the server computes for the aggregate (see AdminController::
+        // analyticsKpis()) — mirrored here only for VALUES, since a single
+        // point has no "previous period" of its own to diff against; the
+        // trend row stays hidden while hovering for exactly that reason.
+        function hoverKpiValues(point) {
+            const decided = point.approved + point.autoApproved + point.rejected;
+            const rate = (num) => (decided > 0 ? (num / decided * 100).toFixed(1) + '%' : '—');
+            const minutes = point.avgMinutes;
+            const h = Math.floor((minutes || 0) / 60), m = Math.round((minutes || 0) % 60);
+            return {
+                uploaded: String(point.uploaded),
+                approval_rate: rate(point.approved),
+                auto_approval_rate: rate(point.autoApproved),
+                rejection_rate: rate(point.rejected),
+                avg_minutes: minutes === null ? '—' : (h > 0 ? `${h}h ${m}m` : `${m}m`),
+                sla_violation_rate: rate(point.violatedDocuments),
+            };
+        }
+
+        // Swaps all 6 KPI tiles either to one hovered point's own values
+        // (trend row hidden — a single point has nothing to diff against)
+        // or back to the whole-window aggregate (trend row restored from
+        // the exact pre-formatted strings PHP rendered — see
+        // analytics-panel.blade.php's $kpiAggregate, so a revert can never
+        // drift from what the server actually calculated).
+        function applyKpiTiles(panelContent, point, isAggregate) {
+            if (!panelContent) return;
+
+            if (isAggregate) {
+                const raw = panelContent.querySelector('[data-kpi-aggregate-json]')?.textContent;
+                if (!raw) return;
+                const aggregate = JSON.parse(raw);
+                Object.keys(aggregate).forEach((key) => {
+                    const tile = aggregate[key];
+                    const valueEl = panelContent.querySelector(`[data-kpi-value="${key}"]`);
+                    const trendEl = panelContent.querySelector(`[data-kpi-trend="${key}"]`);
+                    if (valueEl) valueEl.textContent = tile.value;
+                    if (!trendEl) return;
+                    trendEl.style.display = tile.trend === null ? 'none' : '';
+                    trendEl.className = trendEl.className.replace(/text-(approved|rejected|surface)-\d+/, tile.trendColor);
+                    trendEl.querySelector('[data-kpi-trend-up]').style.display = tile.trendUp ? '' : 'none';
+                    trendEl.querySelector('[data-kpi-trend-down]').style.display = tile.trendDown ? '' : 'none';
+                    trendEl.querySelector('[data-kpi-trend-text]').textContent = tile.trend ?? '';
+                });
+                return;
+            }
+
+            const values = hoverKpiValues(point);
+            Object.keys(values).forEach((key) => {
+                const valueEl = panelContent.querySelector(`[data-kpi-value="${key}"]`);
+                const trendEl = panelContent.querySelector(`[data-kpi-trend="${key}"]`);
+                if (valueEl) valueEl.textContent = values[key];
+                if (trendEl) trendEl.style.display = 'none';
+            });
+        }
+
+        function applyAnalyticsPoint(svg, point, isAggregate) {
             if (!point) return;
 
             const crosshair = svg.querySelector('.analytics-crosshair');
@@ -330,30 +447,48 @@
                 if (dot) { dot.setAttribute('cx', point.x); dot.setAttribute('cy', point[`${dataKey}Y`]); }
             });
 
-            const readout = svg.closest('.analytics-panel-content')?.querySelector('[data-analytics-readout]');
-            if (!readout) return;
-            readout.querySelector('[data-readout-date]').textContent = point.bucket;
-            readout.querySelector('[data-readout-uploaded]').textContent = point.uploaded;
-            readout.querySelector('[data-readout-approved]').textContent = point.approved;
-            readout.querySelector('[data-readout-autoapproved]').textContent = point.autoApproved;
-            readout.querySelector('[data-readout-rejected]').textContent = point.rejected;
+            const panelContent = svg.closest('.analytics-panel-content');
+            const readout = panelContent?.querySelector('[data-analytics-readout]');
+            if (readout) {
+                // On mouseout this reverts to the whole-window totals (see
+                // analytics-panel.blade.php's $aggregateReadout), not
+                // whichever bucket happens to be last — e.g. a Day view's
+                // final hour is almost always still empty while today is
+                // in progress, which is the original bug this line started
+                // from. Hovering still shows that one specific point's own
+                // numbers, same as before.
+                const readoutData = isAggregate
+                    ? JSON.parse(panelContent.querySelector('[data-readout-aggregate-json]')?.textContent || '{}')
+                    : point;
+                readout.querySelector('[data-readout-date]').textContent = readoutData.bucket;
+                readout.querySelector('[data-readout-uploaded]').textContent = readoutData.uploaded;
+                readout.querySelector('[data-readout-approved]').textContent = readoutData.approved;
+                readout.querySelector('[data-readout-autoapproved]').textContent = readoutData.autoApproved;
+                readout.querySelector('[data-readout-rejected]').textContent = readoutData.rejected;
+                readout.querySelector('[data-readout-violated]').textContent = readoutData.violatedDocuments;
+            }
+
+            applyKpiTiles(panelContent, point, isAggregate);
         }
 
         overviewEl.addEventListener('mousemove', function (e) {
             const svg = e.target.closest('.analytics-chart-svg');
             if (!svg) return;
-            applyAnalyticsPoint(svg, analyticsPointAt(svg, e.clientX));
+            applyAnalyticsPoint(svg, analyticsPointAt(svg, e.clientX), false);
         });
 
         // mouseleave doesn't bubble, so delegation uses mouseout + a
-        // relatedTarget check instead — resets to the most recent period
-        // once the cursor genuinely leaves the chart (not just moving
-        // between child elements within it).
+        // relatedTarget check instead — resets once the cursor genuinely
+        // leaves the chart (not just moving between child elements within
+        // it). The readout line and the crosshair/dots rest on the most
+        // recent period, same as always; the KPI tiles specifically revert
+        // to the whole-window aggregate instead (isAggregate=true) — see
+        // applyKpiTiles()'s own docblock for why that distinction matters.
         overviewEl.addEventListener('mouseout', function (e) {
             const svg = e.target.closest('.analytics-chart-svg');
             if (!svg || svg.contains(e.relatedTarget)) return;
             const points = JSON.parse(svg.dataset.points || '[]');
-            applyAnalyticsPoint(svg, points[points.length - 1]);
+            applyAnalyticsPoint(svg, points[points.length - 1], true);
         });
 
         // Every live refresh above swaps #admin-overview's ENTIRE contents
