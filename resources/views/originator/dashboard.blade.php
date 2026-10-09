@@ -98,7 +98,7 @@
                         </svg>
                     </span>
                     <span class="text-sm font-medium text-surface-700">Drag & drop your document(s) here</span>
-                    <span class="text-xs text-surface-400">or click to browse — PDF, DOCX, TXT, PNG, JPG (max 20MB each, up to 20 files)</span>
+                    <span class="text-xs text-surface-400">or click to browse — PDF, DOCX, DOC, TXT, PNG, JPG (max 20MB each, up to 20 files)</span>
                     <span id="file-name" class="text-xs font-medium text-primary-700 mt-1"></span>
                     <input id="file-input" type="file" name="files[]" class="sr-only" multiple required>
                 </label>
