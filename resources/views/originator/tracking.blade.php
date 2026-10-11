@@ -126,6 +126,70 @@
             submitBtn.disabled = !hasUnsavedRevisionEdits();
         }
 
+        // Same instant 15MB-per-file check and disable-don't-error
+        // treatment as the New Submission form
+        // (originator/dashboard.blade.php) — this form had neither
+        // before: an oversized file only surfaced after a full server
+        // round trip (a flashed error on a freshly-reloaded page), and
+        // "Resubmit" was always clickable regardless of whether a file
+        // or due date had actually been picked yet.
+        const RESUBMIT_MAX_FILE_BYTES = 15 * 1024 * 1024; // keep in sync with DocumentController::resubmit()'s 'file' => 'max:15360' rule
+
+        function checkResubmitFileSize(form) {
+            const fileInput = form.querySelector('#resubmit-file-input');
+            const errorEl = form.querySelector('#resubmit-file-size-error');
+            if (!fileInput || !errorEl) return true;
+
+            const file = fileInput.files[0];
+            if (file && file.size > RESUBMIT_MAX_FILE_BYTES) {
+                errorEl.textContent = `"${file.name}" is over the 15MB per-file limit — choose a smaller file.`;
+                errorEl.classList.remove('hidden');
+
+                return false;
+            }
+
+            errorEl.classList.add('hidden');
+
+            return true;
+        }
+
+        // Takes the form itself rather than querying contentEl directly —
+        // called both from delegated listeners below (which already have
+        // the form from e.target.closest()) and right after a live swap,
+        // where contentEl's own children are brand new.
+        function updateResubmitSubmitState(form) {
+            const fileInput = form.querySelector('#resubmit-file-input');
+            const dueDateInput = form.querySelector('#resubmit-due-date');
+            const submitBtn = form.querySelector('#resubmit-submit-btn');
+            if (!fileInput || !dueDateInput || !submitBtn) return;
+
+            const hasFile = fileInput.files.length > 0;
+            const hasDueDate = !!dueDateInput.value;
+            const fileOk = checkResubmitFileSize(form);
+
+            submitBtn.disabled = !(hasFile && hasDueDate && fileOk);
+        }
+
+        // Confirmed real gap: a live update (any status change on ANY of
+        // this originator's documents, not just this one — plus the poll
+        // fallback below) replaces #tracking-content's whole innerHTML,
+        // which silently threw away a file and/or due date already picked
+        // in the Resubmit form but not yet submitted — same category of
+        // problem hasUnsavedRevisionEdits() already exists to prevent for
+        // the revision editor, just never extended to cover this form
+        // too. Re-computed fresh every call, same reasoning as
+        // hasUnsavedRevisionEdits() — never a stored flag that could get
+        // stuck.
+        function hasUnsavedResubmitEdits() {
+            const form = contentEl.querySelector('#resubmit-form');
+            if (!form) return false;
+
+            const fileInput = form.querySelector('#resubmit-file-input');
+            const dueDateInput = form.querySelector('#resubmit-due-date');
+
+            return (fileInput && fileInput.files.length > 0) || (dueDateInput && dueDateInput.value !== '');
+        }
+
         const opts = {
             refreshUrl: contentEl.dataset.refreshUrl,
             target: contentEl,
@@ -143,8 +207,11 @@
             // "broken." Skipped entirely while there's an unsaved edit;
             // resumes on its own the moment that's no longer true (saved,
             // reverted, or the page reloads after a real save) since
-            // hasUnsavedRevisionEdits() is checked live, not cached.
-            isBusy: hasUnsavedRevisionEdits,
+            // hasUnsavedRevisionEdits() is checked live, not cached. Same
+            // reasoning now covers the Resubmit form's own in-progress
+            // file/due-date pick — see hasUnsavedResubmitEdits()'s own
+            // comment.
+            isBusy: () => hasUnsavedRevisionEdits() || hasUnsavedResubmitEdits(),
             // The live swap replaces #tracking-content's whole innerHTML
             // (new header card content, new tracker rows, and possibly a
             // Revision Requests card appearing/disappearing) — re-measure
@@ -155,6 +222,18 @@
                 sizeTrackingLayout();
                 captureOriginalRevisionState();
                 updateSaveRevisionButtonState();
+                // The resubmit form's due-date picker is brand-new DOM
+                // after a swap (innerHTML replacement) — its listeners
+                // from the previous initDueDatePicker() call are gone
+                // along with the old nodes, same reason every other
+                // listener in this block is delegated on contentEl
+                // instead of bound directly. This one genuinely can't be
+                // delegated (a whole calendar's worth of per-cell click
+                // handlers), so it's just re-run on whatever matching
+                // root(s) exist in the fresh markup.
+                contentEl.querySelectorAll('[data-due-date-picker]').forEach(initDueDatePicker);
+                const resubmitForm = contentEl.querySelector('#resubmit-form');
+                if (resubmitForm) updateResubmitSubmitState(resubmitForm);
             },
         };
 
@@ -192,34 +271,30 @@
         @endif
         startLivePoll({ ...opts, pollUrl: contentEl.dataset.pollUrl });
 
-        // Heads-up only, not authoritative — same check as the main
-        // upload form's (see originator/dashboard.blade.php's matching
-        // comment for the full reasoning). Delegated on #tracking-content
-        // — the stable wrapper that survives every live swap above —
-        // rather than bound directly to the input, which gets replaced
-        // wholesale on every swap along with the rest of this fragment.
-        const businessHoursConfig = JSON.parse(document.querySelector('meta[name="business-hours"]')?.content || 'null');
+        // Replaces the old native datetime-local input + reactive "that's
+        // invalid" warning shown only after the fact — see the
+        // due-date-picker Blade component's own docblock. Also re-run from
+        // the onSwap handler below every time a live update replaces this
+        // fragment's markup, since that discards whatever listeners the
+        // previous call attached.
+        contentEl.querySelectorAll('[data-due-date-picker]').forEach(initDueDatePicker);
+        const initialResubmitForm = contentEl.querySelector('#resubmit-form');
+        if (initialResubmitForm) updateResubmitSubmitState(initialResubmitForm);
 
-        function isWithinWorkingHours(date) {
-            if (!businessHoursConfig || isNaN(date.getTime())) return true;
-            if (!businessHoursConfig.workingDays.includes(date.getDay())) return false;
-
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            if (businessHoursConfig.holidays.includes(`${y}-${m}-${d}`)) return false;
-
-            const minutes = date.getHours() * 60 + date.getMinutes();
-            return minutes >= businessHoursConfig.startMinutes && minutes < businessHoursConfig.endMinutes;
-        }
-
+        // Live-updates "Resubmit"'s disabled state the instant a file is
+        // picked or the due-date picker's hidden value changes (that
+        // second case relies on applyTime() in resources/js/app.js
+        // dispatching a bubbling "change" event when it sets the hidden
+        // input's value directly). Delegated on contentEl, not bound to
+        // the form's own elements, for the same reason every other
+        // listener in this block is — the form is swapped out and back in
+        // wholesale on every live refresh.
         contentEl.addEventListener('change', function (e) {
-            const input = e.target.closest('#resubmit-due-date');
-            if (!input) return;
-            const warning = contentEl.querySelector('#resubmit-due-date-warning');
-            if (!warning) return;
-            const valid = !input.value || isWithinWorkingHours(new Date(input.value));
-            warning.classList.toggle('hidden', valid);
+            const form = e.target.closest('#resubmit-form');
+            if (!form) return;
+            if (e.target.id === 'resubmit-file-input' || e.target.id === 'resubmit-due-date') {
+                updateResubmitSubmitState(form);
+            }
         });
 
         // Checking a "Revision Requests" flag (Feature: jump straight to
@@ -353,6 +428,33 @@
         // (never meaningful here) are trimmed — so decoding it server-
         // side sidesteps the whole problem without touching global
         // middleware config.
+        // Real required-field check for the resubmit form's due-date
+        // picker — see validateDueDatePicker()'s own docblock for why
+        // this can't just be the `required` attribute (no effect on the
+        // hidden input this component submits through). Delegated on
+        // contentEl, not bound to #resubmit-form directly, for the same
+        // reason every other listener in this block is — it gets
+        // replaced wholesale on every live swap.
+        contentEl.addEventListener('submit', function (e) {
+            const form = e.target.closest('#resubmit-form');
+            if (!form) return;
+
+            const picker = form.querySelector('[data-due-date-picker]');
+            if (picker && !validateDueDatePicker(picker)) {
+                e.preventDefault();
+
+                return;
+            }
+
+            // Re-checked here too (not just on the 'change' listener
+            // above) — same reasoning as the New Submission form's own
+            // submit-time re-check.
+            if (!checkResubmitFileSize(form)) {
+                e.preventDefault();
+                form.querySelector('#resubmit-file-size-error')?.scrollIntoView({ block: 'center' });
+            }
+        });
+
         contentEl.addEventListener('submit', function (e) {
             const form = e.target.closest('#docx-revision-form');
             const editor = document.getElementById('docx-revision-editor');

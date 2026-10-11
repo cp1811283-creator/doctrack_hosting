@@ -119,6 +119,11 @@
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-rejected-50 text-rejected-700 flex-shrink-0">Disputed</span>
                             @endif
                         </div>
+                        {{-- Own line below, not squeezed into the badge row
+                             above — that row already has a confirmed real
+                             bug history (2026-10-03) around running out of
+                             horizontal space. --}}
+                        <x-tracking-code :code="$doc->tracking_code" class="inline-flex items-center gap-1 font-mono text-[11px] text-surface-400 mt-0.5" />
                     </td>
                     <td class="px-4 py-3 text-surface-600">{{ $doc->ml_category }}</td>
                     <td class="px-4 py-3 text-surface-500">{{ $doc->originator->full_name ?? '—' }}</td>

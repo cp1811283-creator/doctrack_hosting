@@ -70,7 +70,7 @@ class DocumentRepository extends Model
     }
 
     protected $fillable = [
-        'originator_id', 'batch_id', 'model_id', 'title', 'file_path', 'original_filename',
+        'originator_id', 'batch_id', 'model_id', 'title', 'tracking_code', 'file_path', 'original_filename',
         'mime_type', 'ocr_text', 'used_ocr_fallback', 'ml_category', 'ml_confidence',
         'is_validated', 'validation_errors', 'due_date', 'global_status',
         'previous_version_id', 'version_number', 'is_legacy_import', 'disputed_at',

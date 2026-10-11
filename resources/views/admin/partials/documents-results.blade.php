@@ -26,6 +26,7 @@
                     <div class="flex items-center gap-1.5">
                         <span class="text-sm font-semibold text-surface-900 truncate">{{ $doc->title }}</span>
                         <span class="text-xs text-surface-400 flex-shrink-0">#{{ $doc->document_id }}</span>
+                        <x-tracking-code :code="$doc->tracking_code" class="inline-flex items-center gap-1 font-mono text-xs text-surface-400 flex-shrink-0" />
                     </div>
                     <p class="text-xs text-surface-500 mt-1">
                         Uploaded {{ $doc->upload_date?->format('M j, Y g:i:s A') }}

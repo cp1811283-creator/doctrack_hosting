@@ -107,6 +107,7 @@
                             @endif
                         @endif
                     </div>
+                    <x-tracking-code :code="$document->tracking_code" class="inline-flex items-center gap-1 font-mono text-xs text-surface-400 mt-0.5" />
                     @if($document->is_legacy_import)
                         <p class="text-sm text-processing-700 mt-1">
                             Imported directly by an administrator — not classified, validated, or peer-reviewed through the normal approval workflow.
@@ -228,18 +229,22 @@
                              so this reads as a clickable control at a
                              glance, not a plain caption. --}}
                         <summary class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-50 hover:bg-primary-100 text-primary-700 font-medium cursor-pointer select-none transition-colors">Resubmit a revised version</summary>
-                        <form method="POST" action="{{ route('originator.documents.resubmit', $document) }}" enctype="multipart/form-data" class="mt-3 space-y-3 max-w-sm">
+                        <form id="resubmit-form" method="POST" action="{{ route('originator.documents.resubmit', $document) }}" enctype="multipart/form-data" class="mt-3 space-y-3 max-w-sm">
                             @csrf
                             <div>
                                 <label class="block text-sm font-medium text-surface-700 mb-1">Revised document</label>
-                                <input type="file" name="file" required class="w-full text-sm">
+                                <input type="file" name="file" id="resubmit-file-input" required class="w-full text-sm">
+                                {{-- Same instant 15MB-per-file check as the New
+                                     Submission form (originator/dashboard.blade.php)
+                                     — see resubmitFormInit() in tracking.blade.php.
+                                     Previously this was only caught server-side,
+                                     after a full page reload. --}}
+                                <p id="resubmit-file-size-error" class="hidden mt-1 text-xs text-rejected-700"></p>
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-surface-700 mb-1">Due date &amp; time</label>
                                 <p class="text-xs text-surface-400 mb-1">Must fall within working hours (9 AM–5 PM, Mon–Sat).</p>
-                                <input type="datetime-local" id="resubmit-due-date" name="due_date" required min="{{ now()->addMinutes(config('sla.min_due_date_buffer_minutes', 15))->format('Y-m-d\TH:i') }}"
-                                    class="w-full rounded-lg border-surface-300 text-sm px-3 py-2">
-                                <p id="resubmit-due-date-warning" class="hidden mt-1 text-xs text-rejected-700">This falls outside working hours (9 AM–5 PM, Mon–Sat) or on a holiday — pick a different date/time.</p>
+                                <x-due-date-picker id="resubmit-due-date" name="due_date" />
                             </div>
                             {{-- Same routing_mode choice as a fresh upload (see
                                  originator/dashboard.blade.php) — matters most
@@ -265,7 +270,13 @@
                                     </label>
                                 </div>
                             </details>
-                            <button class="w-full bg-primary-700 hover:bg-primary-800 text-white text-sm font-medium py-2 rounded-lg">Resubmit</button>
+                            {{-- Starts disabled — resubmitFormInit() in
+                                 tracking.blade.php re-enables it once a file
+                                 (within the 15MB limit) and a due date are
+                                 both picked, same disable-don't-error
+                                 treatment the New Submission form uses. --}}
+                            <button type="submit" id="resubmit-submit-btn" disabled
+                                class="w-full bg-primary-700 hover:bg-primary-800 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-medium py-2 rounded-lg transition-colors">Resubmit</button>
                         </form>
                     </details>
                 </div>

@@ -32,12 +32,15 @@
             {{-- data-row-group ties this row to its own "Validation issues"
                  row right below (same document_id on both) — initFittedPagination()
                  always shows or hides the two together, one logical item. --}}
-            <tr class="submission-row hover:bg-surface-50 transition-colors" data-document-title="{{ strtolower($doc->title) }}" data-row-group="{{ $doc->document_id }}">
-                <td class="px-6 py-4 font-medium text-surface-800 max-w-xs truncate">
-                    {{ $doc->title }}
-                    @if($doc->version_number > 1)
-                        <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 align-middle">v{{ $doc->version_number }}</span>
-                    @endif
+            <tr class="submission-row hover:bg-surface-50 transition-colors" data-document-title="{{ strtolower($doc->title.' '.$doc->tracking_code) }}" data-row-group="{{ $doc->document_id }}">
+                <td class="px-6 py-4 font-medium text-surface-800 max-w-xs">
+                    <div class="truncate">
+                        {{ $doc->title }}
+                        @if($doc->version_number > 1)
+                            <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 align-middle">v{{ $doc->version_number }}</span>
+                        @endif
+                    </div>
+                    <x-tracking-code :code="$doc->tracking_code" class="inline-flex items-center gap-1 font-mono text-[11px] text-surface-400 font-normal mt-0.5" />
                 </td>
                 <td class="px-6 py-4 text-surface-500">
                     @if($doc->batch)
@@ -69,7 +72,7 @@
                 </td>
             </tr>
             @if(!$doc->is_validated && $doc->global_status === 'processing')
-            <tr class="submission-row bg-rejected-50/50" data-document-title="{{ strtolower($doc->title) }}" data-row-group="{{ $doc->document_id }}">
+            <tr class="submission-row bg-rejected-50/50" data-document-title="{{ strtolower($doc->title.' '.$doc->tracking_code) }}" data-row-group="{{ $doc->document_id }}">
                 <td colspan="6" class="px-6 pb-3 text-xs text-rejected-700">
                     Validation issues: {{ implode(' · ', $doc->validation_errors ?? []) }}
                 </td>

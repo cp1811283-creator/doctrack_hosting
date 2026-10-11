@@ -40,7 +40,16 @@ class DocumentController extends Controller
             ->with(['currentAssignment.stage', 'assignments.stage', 'batch']);
 
         if ($request->filled('document')) {
-            $query->where('title', 'like', '%'.$request->string('document').'%');
+            // Also matches tracking_code (Feature: a short reference like
+            // "JO-2026-0047" to search by when two documents share the
+            // exact same title — see TrackingCodeService's own docblock
+            // for why titles alone were never enough) — same box, no new
+            // UI needed.
+            $keyword = $request->string('document');
+            $query->where(function ($q) use ($keyword) {
+                $q->where('title', 'like', "%{$keyword}%")
+                    ->orWhere('tracking_code', 'like', "%{$keyword}%");
+            });
         }
         if ($request->filled('status')) {
             $query->where('global_status', $request->string('status'));
@@ -71,8 +80,42 @@ class DocumentController extends Controller
             ->latest('upload_date')->get();
 
         $categories = ValidationService::knownCategories();
+        $postMaxBytes = $this->postMaxSizeInBytes();
 
-        return view('originator.dashboard', compact('documents', 'categories'));
+        return view('originator.dashboard', compact('documents', 'categories', 'postMaxBytes'));
+    }
+
+    /**
+     * PHP's own currently-configured post_max_size (the hard ceiling on
+     * an entire multipart request body, every selected file combined —
+     * distinct from upload_max_filesize, which only caps ONE file),
+     * converted to a plain byte count for the New Submission form's own
+     * client-side total-batch-size check (resources/js/app.js). Confirmed
+     * real bug this exists to prevent: a batch well within Laravel's own
+     * per-file 15MB validation rule can still exceed this PHP-level
+     * ceiling, which PHP enforces BEFORE Laravel's validator ever runs —
+     * surfacing as a bare PostTooLargeException with no graceful
+     * handling, reported as the page just hanging. Read live via
+     * ini_get() rather than hardcoded so this never drifts out of sync
+     * with whatever the real configured value actually is in this
+     * environment.
+     */
+    private function postMaxSizeInBytes(): int
+    {
+        $value = trim((string) ini_get('post_max_size'));
+        if ($value === '' || $value === '0') {
+            return 0; // '0' means "no limit" in php.ini — nothing for the client check to compare against
+        }
+
+        $unit = strtoupper(substr($value, -1));
+        $number = (float) $value;
+
+        return (int) match ($unit) {
+            'G' => $number * 1024 ** 3,
+            'M' => $number * 1024 ** 2,
+            'K' => $number * 1024,
+            default => $number,
+        };
     }
 
     /**
@@ -138,12 +181,35 @@ class DocumentController extends Controller
         }
 
         $validated = $request->validate([
-            'files' => ['required', 'array', 'min:1', 'max:20'],
+            // 15MB x 10 files = 150MB — deliberately chosen so the worst
+            // case these rules allow can never exceed the real total
+            // ceiling the closure below enforces, instead of independent
+            // numbers that happened to multiply out to something the
+            // server would reject anyway (confirmed real gap: a batch
+            // could pass both the per-file and file-count rules
+            // individually and still get rejected at the infrastructure
+            // layer, with no app-level rule explaining why). The closure
+            // is the total-batch-size rule itself — not just relying on
+            // PHP's post_max_size to silently enforce this one layer
+            // down. Gives a normal, Laravel-formatted validation error
+            // (same shape every other rule here produces) instead of a
+            // bare PostTooLargeException if post_max_size is ever
+            // misconfigured lower than this, and stays correct even if
+            // the per-file/file-count rules are ever changed individually
+            // without someone remembering to re-check the math by hand.
+            'files' => ['required', 'array', 'min:1', 'max:10', function ($attribute, $value, $fail) {
+                $totalBytes = collect($value)->filter()->sum(fn ($file) => $file->getSize());
+                $limitBytes = 150 * 1024 * 1024;
+                if ($totalBytes > $limitBytes) {
+                    $totalMb = round($totalBytes / (1024 * 1024), 1);
+                    $fail("These files add up to {$totalMb} MB, which is over the 150 MB total-upload limit — try fewer files or a smaller batch.");
+                }
+            }],
             'files.*' => [
                 'file',
                 'mimes:pdf,docx,doc,txt,png,jpg,jpeg',
                 new ReliableMimeType,
-                'max:20480',
+                'max:15360',
             ],
             'due_date' => ['required', 'date', function ($attribute, $value, $fail) {
                 $buffer = config('sla.min_due_date_buffer_minutes', 15);
@@ -550,7 +616,12 @@ class DocumentController extends Controller
         abort_unless($document->isResubmittable(), 409, 'Only a rejected, failed-validation, or disputed document can be resubmitted.');
 
         $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:20480'],
+            // Same 15MB per-file ceiling the New Submission form uses
+            // (DocumentController::store()) — one file here, so the
+            // 10-file/150MB-total rules there don't apply, but the
+            // per-file number itself should stay the same everywhere a
+            // document gets uploaded, not drift between the two forms.
+            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:15360'],
             'due_date' => ['required', 'date', function ($attribute, $value, $fail) {
                 $buffer = config('sla.min_due_date_buffer_minutes', 15);
                 if (Carbon::parse($value)->lt(now()->addMinutes($buffer))) {

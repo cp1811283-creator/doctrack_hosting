@@ -453,6 +453,69 @@
 
     document.addEventListener('DOMContentLoaded', __docTrackUpdateAnalyticsNowLine);
     setInterval(__docTrackUpdateAnalyticsNowLine, 1000);
+
+    // Shared by every tracking-code component instance (Feature: copy
+    // button) — one global function rather than wiring a listener per
+    // instance, so it's a harmless no-op include on any page with zero
+    // tracking codes on screen, same reasoning as every other
+    // __docTrack* global here. Swaps the button's own icon to a
+    // checkmark briefly rather than a separate toast/tooltip element,
+    // so there's nothing extra to position or clean up.
+    //
+    // Confirmed real bug: navigator.clipboard only EXISTS in a secure
+    // context (HTTPS, or plain http on literally "localhost"/"127.0.0.1")
+    // — this app is routinely tested over a LAN IP on plain HTTP (see
+    // AppServiceProvider's own docblock on exactly that setup), where
+    // navigator.clipboard is undefined. Calling .writeText() on it then
+    // throws SYNCHRONOUSLY, before the promise chain's own .catch() ever
+    // gets a chance to run — the whole thing failed completely silently.
+    // Guarded explicitly now, with a working fallback for that case
+    // instead of just swallowing the failure.
+    function __docTrackCopyTrackingCode(button, code) {
+        const copyIcon = button.querySelector('[data-copy-icon]');
+        const checkIcon = button.querySelector('[data-check-icon]');
+        if (!copyIcon || !checkIcon) return;
+
+        const showCopied = function () {
+            copyIcon.classList.add('hidden');
+            checkIcon.classList.remove('hidden');
+            clearTimeout(button.dataset.resetTimer);
+            button.dataset.resetTimer = setTimeout(function () {
+                copyIcon.classList.remove('hidden');
+                checkIcon.classList.add('hidden');
+            }, 1500);
+        };
+
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(code).then(showCopied).catch(function () {
+                __docTrackFallbackCopy(code, showCopied);
+            });
+        } else {
+            __docTrackFallbackCopy(code, showCopied);
+        }
+    }
+
+    // execCommand('copy') is deprecated but still the only thing that
+    // actually works outside a secure context — selects a temporary,
+    // off-screen textarea and copies from that, same trick browsers
+    // themselves used before the Clipboard API existed.
+    function __docTrackFallbackCopy(code, onSuccess) {
+        const textarea = document.createElement('textarea');
+        textarea.value = code;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            if (document.execCommand('copy')) onSuccess();
+        } catch (e) {
+            // Nothing left to try — the code is still right there as
+            // selectable text either way.
+        }
+        document.body.removeChild(textarea);
+    }
 </script>
 @stack('scripts')
 </body>

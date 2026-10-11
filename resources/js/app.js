@@ -942,6 +942,413 @@ function initFittedPagination(listElId, groupSelector) {
 window.initFittedPagination = initFittedPagination;
 
 /**
+ * Feature: a due-date/time picker where Sunday, admin-marked holidays,
+ * and anything outside 9 AM-5 PM simply can't be selected — replaces the
+ * old native datetime-local input + a reactive "that's invalid" warning
+ * shown only after the originator already picked a bad value. See the
+ * due-date-picker Blade component's own docblock for the full reasoning.
+ * Called once per [data-due-date-picker] root (there are two on this
+ * app today — the New Submission form and the resubmission form — so
+ * this has to work as a reusable widget, not a one-off inline script).
+ *
+ * datetime-local's own value format has no timezone attached (plain
+ * wall-clock numbers, "Y-m-d\TH:i"), and the server reads it the exact
+ * same way — so this builds/reads dates with plain Date getters
+ * (getDay/getHours/...), never toISOString() or anything UTC-aware,
+ * which would silently shift the picked time through the browser's own
+ * local timezone for no reason that matches what the user actually
+ * clicked.
+ */
+function initDueDatePicker(root) {
+    const hiddenInput = root.querySelector('[data-due-date-input]');
+    const trigger = root.querySelector('[data-due-date-trigger]');
+    const display = root.querySelector('[data-due-date-display]');
+    const popup = root.querySelector('[data-due-date-popup]');
+    const monthLabel = root.querySelector('[data-due-date-month-label]');
+    const daysGrid = root.querySelector('[data-due-date-days]');
+    const timesWrap = root.querySelector('[data-due-date-times-wrap]');
+    const timeInput = root.querySelector('[data-due-date-time-input]');
+    const timeApplyBtn = root.querySelector('[data-due-date-time-apply]');
+    const prevBtn = root.querySelector('[data-due-date-prev]');
+    const nextBtn = root.querySelector('[data-due-date-next]');
+    if (!hiddenInput || !trigger || !popup) return;
+
+    // Same meta tag the SLA pause-ticker in layouts/app.blade.php already
+    // reads — one shared source of "what counts as business hours" for
+    // the whole app, not a second copy of the same config.
+    const config = JSON.parse(document.querySelector('meta[name="business-hours"]')?.content || 'null');
+    const bufferMinutes = parseInt(root.dataset.bufferMinutes || '15', 10);
+
+    let viewYear, viewMonth; // the calendar's currently-displayed month (0-indexed month, matching Date's own convention)
+    let selectedDate = null; // a Date holding just the picked day (time components zeroed)
+    let selectedMinutes = null; // minutes since midnight on that day, once a time slot's picked
+
+    function today() {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        return d;
+    }
+
+    function earliestAllowedMoment() {
+        return new Date(Date.now() + bufferMinutes * 60000);
+    }
+
+    function isWorkingDay(date) {
+        if (!config) return true; // fail open — never wrongly lock out every date if the config didn't load
+        if (!config.workingDays.includes(date.getDay())) return false;
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return !config.holidays.includes(`${y}-${m}-${d}`);
+    }
+
+    // Whether ANY moment at all, between business-open and business-close,
+    // is still choosable on this exact calendar day — used to grey out
+    // "today" entirely once the working day has effectively ended (either
+    // past 5 PM, or so close to it that the minimum-buffer rule leaves no
+    // room). Compares full Date objects throughout, not minute-of-day
+    // arithmetic, so this stays correct even in the rare case where
+    // "now + the buffer" crosses past midnight into the next calendar day.
+    function hasAnyValidMomentOn(date) {
+        if (!config) return true; // fail open
+        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(config.startMinutes / 60), config.startMinutes % 60);
+        const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate(), Math.floor(config.endMinutes / 60), config.endMinutes % 60);
+        const isToday = date.getTime() === today().getTime();
+        const effectiveStart = isToday && earliestAllowedMoment() > dayStart ? earliestAllowedMoment() : dayStart;
+
+        return effectiveStart < dayEnd;
+    }
+
+    function isDaySelectable(date) {
+        if (date < today()) return false;
+        if (!isWorkingDay(date)) return false;
+
+        return hasAnyValidMomentOn(date);
+    }
+
+    // Validates a typed "HH:MM" (24-hour, straight from a native
+    // type="time" input's own .value) against business hours AND, for
+    // today specifically, the same minimum-buffer rule the old native
+    // datetime-local input's own `min` attribute used to enforce.
+    // Returns a plain {valid, reason} pair rather than throwing — this is
+    // a normal, expected outcome (the originator typing something out of
+    // range), not an error condition.
+    function validateTypedTime(date, hh, mm) {
+        if (!config) return { valid: true };
+
+        const minutes = hh * 60 + mm;
+        if (minutes < config.startMinutes || minutes >= config.endMinutes) {
+            return { valid: false, reason: 'Must be between 9:00 AM and 5:00 PM.' };
+        }
+
+        const candidate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hh, mm);
+        if (date.getTime() === today().getTime() && candidate < earliestAllowedMoment()) {
+            return { valid: false, reason: `Must be at least ${bufferMinutes} minutes from now.` };
+        }
+
+        return { valid: true };
+    }
+
+    function formatMinutes(mins) {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        const period = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+
+        return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+    }
+
+    function toInputValue(date, mins) {
+        const y = date.getFullYear();
+        const mo = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        const h = String(Math.floor(mins / 60)).padStart(2, '0');
+        const mi = String(mins % 60).padStart(2, '0');
+
+        return `${y}-${mo}-${d}T${h}:${mi}`;
+    }
+
+    function renderCalendar() {
+        monthLabel.textContent = new Date(viewYear, viewMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        daysGrid.innerHTML = '';
+
+        const firstOfMonth = new Date(viewYear, viewMonth, 1);
+        const startOffset = firstOfMonth.getDay(); // how many blank cells before day 1
+        const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+        for (let i = 0; i < startOffset; i++) {
+            daysGrid.appendChild(document.createElement('span'));
+        }
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(viewYear, viewMonth, day);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = day;
+            const selectable = isDaySelectable(date);
+            const isSelected = selectedDate && date.getTime() === selectedDate.getTime();
+
+            btn.className = 'text-xs rounded py-1 transition-colors ' + (
+                !selectable
+                    ? 'text-surface-300 cursor-not-allowed'
+                    : isSelected
+                        ? 'bg-primary-700 text-white font-semibold'
+                        : 'text-surface-700 hover:bg-primary-50 cursor-pointer'
+            );
+
+            if (!selectable) {
+                btn.disabled = true;
+            } else {
+                btn.addEventListener('click', () => selectDate(date));
+            }
+
+            daysGrid.appendChild(btn);
+        }
+    }
+
+    function showTimeSection() {
+        if (!selectedDate) {
+            timesWrap.classList.add('hidden');
+
+            return;
+        }
+
+        // Pre-fills with whatever was already picked (reopening the
+        // popup after a valid selection), or the earliest valid moment
+        // on this day otherwise — a sensible starting point to edit from
+        // rather than an empty field.
+        if (selectedMinutes !== null) {
+            timeInput.value = `${String(Math.floor(selectedMinutes / 60)).padStart(2, '0')}:${String(selectedMinutes % 60).padStart(2, '0')}`;
+        } else {
+            const isToday = selectedDate.getTime() === today().getTime();
+            const earliestMinutes = isToday
+                ? Math.max(config.startMinutes, earliestAllowedMoment().getHours() * 60 + earliestAllowedMoment().getMinutes())
+                : config.startMinutes;
+            timeInput.value = `${String(Math.floor(earliestMinutes / 60)).padStart(2, '0')}:${String(earliestMinutes % 60).padStart(2, '0')}`;
+        }
+        timesWrap.classList.remove('hidden');
+        updateTimeApplyState();
+    }
+
+    // Disables "Set" the instant the typed time falls outside business
+    // hours — no click, no red message after the fact, the same
+    // disable-don't-error treatment the calendar's own day grid already
+    // uses for Sundays/holidays. Runs on every keystroke/change, not
+    // just on blur, so the button's state always matches what's
+    // currently typed.
+    function updateTimeApplyState() {
+        const raw = timeInput.value;
+        const result = raw === ''
+            ? { valid: false, reason: 'Enter a time first.' }
+            : validateTypedTime(selectedDate, ...raw.split(':').map((n) => parseInt(n, 10)));
+
+        timeApplyBtn.disabled = !result.valid;
+        timeApplyBtn.classList.toggle('opacity-50', !result.valid);
+        timeApplyBtn.classList.toggle('cursor-not-allowed', !result.valid);
+        timeApplyBtn.title = result.valid ? '' : result.reason;
+    }
+
+    function selectDate(date) {
+        selectedDate = date;
+        // Picking a new day invalidates whatever time was chosen for the
+        // previous one (today's buffer-trimmed window in particular never
+        // applies to a future day) — the originator confirms a fresh time
+        // every time the day changes, rather than silently carrying over
+        // a value that might not even be valid anymore.
+        selectedMinutes = null;
+        renderCalendar();
+        showTimeSection();
+        // Confirmed real bug: the time section appearing here grows the
+        // popup taller, but position was only ever computed once on open
+        // (back when it was short, before any day was picked) — left
+        // stale, this visibly jumped the popup around instead of smoothly
+        // growing in place. Recomputed every time the content's actual
+        // height changes, not just on open.
+        positionPopup();
+    }
+
+    // Confirmed real complaint: the previous fixed-30-minute-button grid
+    // made it impossible to enter anything PRECISE even when it would
+    // have been perfectly valid, not just anything invalid. This is a
+    // real, typeable time field — still fully clamped to 9 AM-5 PM.
+    // updateTimeApplyState() already disables "Set" for anything out of
+    // range (live, as you type), so by the time this runs the typed
+    // value is always valid — this is a plain final-sanity guard, not
+    // where the actual validation UX lives, which is why there's no
+    // error message here anymore.
+    function applyTime() {
+        const raw = timeInput.value; // native "HH:MM", empty string if unset
+        if (!raw) return;
+
+        const [hh, mm] = raw.split(':').map((n) => parseInt(n, 10));
+        if (!validateTypedTime(selectedDate, hh, mm).valid) return;
+
+        selectedMinutes = hh * 60 + mm;
+        hiddenInput.value = toInputValue(selectedDate, selectedMinutes);
+        display.textContent = selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ', ' + formatMinutes(selectedMinutes);
+        display.classList.remove('text-surface-400');
+        display.classList.add('text-surface-800');
+        closePopup();
+        // Clears a previously-shown "pick a date first" error (see
+        // validateDueDatePicker()) the instant a real value is picked —
+        // otherwise it would sit there, stale, until the next submit
+        // attempt re-validates it.
+        validateDueDatePicker(root);
+        // Setting .value directly (above) doesn't fire a native input/
+        // change event by itself — dispatched here so code OUTSIDE this
+        // component (e.g. a form's own "disable Submit until valid" logic)
+        // can react to the picker being filled in without this component
+        // needing to know anything about which form it's sitting in.
+        hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    timeInput?.addEventListener('input', updateTimeApplyState);
+    timeApplyBtn?.addEventListener('click', applyTime);
+    timeInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            applyTime();
+        }
+    });
+
+    // position: fixed on the popup (see the component's own comment on
+    // why — escapes clipping from an ancestor scroll container like the
+    // New Submission modal's form body) means its position is computed
+    // here from the trigger's own screen coordinates, not left to CSS.
+    //
+    // Always opens ABOVE the trigger now, not a dynamic below-unless-no-
+    // room flip — that flip was the reported bug: picking a date grows
+    // the popup taller (the time-slot section appearing), which often
+    // flipped it from sitting calmly below the field to jumping up near
+    // the top of the screen, and that jump itself read as broken even
+    // once the underlying stale-position bug was fixed. Opening upward
+    // unconditionally means picking a date never relocates the popup to
+    // a dramatically different part of the screen — it only grows
+    // upward in place. Only exception: a field sitting so close to the
+    // top of the screen that there's truly no room above at all (rare —
+    // a field in the first ~300px of viewport height) falls back to
+    // below, so the popup is never clipped off-screen entirely either
+    // way.
+    function positionPopup() {
+        const triggerRect = trigger.getBoundingClientRect();
+        const popupRect = popup.getBoundingClientRect();
+        const margin = 4;
+
+        let top = triggerRect.top - popupRect.height - margin;
+        if (top < margin) {
+            top = triggerRect.bottom + margin;
+        }
+
+        let left = triggerRect.left;
+        if (left + popupRect.width > window.innerWidth) {
+            left = Math.max(margin, window.innerWidth - popupRect.width - margin);
+        }
+
+        popup.style.top = `${top}px`;
+        popup.style.left = `${left}px`;
+    }
+
+    function openPopup() {
+        popup.classList.remove('hidden');
+        renderCalendar();
+        positionPopup();
+        window.addEventListener('scroll', closePopupOnScroll, true);
+        window.addEventListener('resize', positionPopup);
+    }
+
+    function closePopup() {
+        popup.classList.add('hidden');
+        window.removeEventListener('scroll', closePopupOnScroll, true);
+        window.removeEventListener('resize', positionPopup);
+    }
+
+    // Closes rather than re-positions on scroll — simpler and more
+    // predictable than tracking the trigger's position continuously
+    // through an arbitrary ancestor's scroll, for a popup that's only
+    // ever open a few seconds at a time. The `true` (capture phase)
+    // matters: the New Submission modal's own body scrolls via its own
+    // element, which doesn't bubble a 'scroll' event up to window in
+    // every browser — capture reaches it regardless of which ancestor
+    // actually scrolled.
+    //
+    // Confirmed real bug (back when the time picker was a scrollable
+    // grid of 30-minute slot buttons, since replaced by the single
+    // typeable time field above): scrolling that list fired this and
+    // closed the whole popup — a completely normal interaction, not the
+    // page moving out from under the trigger. The popup.contains() guard
+    // below still matters for any scrollable content a future change
+    // adds inside the popup (the month grid, say), since scroll events
+    // are captured from wherever they originate, including the popup's
+    // own children, not just the window.
+    function closePopupOnScroll(e) {
+        if (popup.contains(e.target)) return;
+        closePopup();
+    }
+
+    trigger.addEventListener('click', () => {
+        if (popup.classList.contains('hidden')) {
+            openPopup();
+        } else {
+            closePopup();
+        }
+    });
+
+    prevBtn?.addEventListener('click', () => {
+        viewMonth -= 1;
+        if (viewMonth < 0) { viewMonth = 11; viewYear -= 1; }
+        renderCalendar();
+    });
+
+    nextBtn?.addEventListener('click', () => {
+        viewMonth += 1;
+        if (viewMonth > 11) { viewMonth = 0; viewYear += 1; }
+        renderCalendar();
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!root.contains(e.target)) closePopup();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closePopup();
+    });
+
+    const start = today();
+    viewYear = start.getFullYear();
+    viewMonth = start.getMonth();
+}
+window.initDueDatePicker = initDueDatePicker;
+
+/**
+ * Real required-field check for a due-date-picker root, called from each
+ * form's own 'submit' handler before it's allowed to proceed — NOT the
+ * plain `required` attribute, which has no effect on the hidden input
+ * this component actually submits through (browsers skip type="hidden"
+ * during constraint validation by spec, confirmed the real cause of a
+ * reported bug: an empty submission silently reached the server, which
+ * rejected it and reloaded the whole page, losing the New Submission
+ * modal and every other field already filled in). Returns true/false so
+ * the caller can decide whether to preventDefault(); toggles the error
+ * message + a red ring on the trigger itself either way, so a form with
+ * several of these (there's only ever one today, but this doesn't
+ * assume that) reports every empty one at once, not just the first.
+ */
+function validateDueDatePicker(root) {
+    const hiddenInput = root.querySelector('[data-due-date-input]');
+    const trigger = root.querySelector('[data-due-date-trigger]');
+    const error = root.querySelector('[data-due-date-error]');
+    if (!hiddenInput) return true;
+
+    const valid = hiddenInput.value !== '';
+    error?.classList.toggle('hidden', valid);
+    trigger?.classList.toggle('border-rejected-500', !valid);
+    trigger?.classList.toggle('ring-1', !valid);
+    trigger?.classList.toggle('ring-rejected-500', !valid);
+
+    return valid;
+}
+window.validateDueDatePicker = validateDueDatePicker;
+
+/**
  * Intercepts clicks on pagination links (see vendor/pagination/custom.blade.php
  * — the app-wide custom pagination view) inside `container`, fetching
  * `opts.refreshUrl` with the CLICKED link's own query string instead of

@@ -103,6 +103,7 @@ class WorkflowService
         private BusinessHoursService $businessHours,
         private MalwareScanService $malwareScanner,
         private DocxRichContentService $docxRichContent,
+        private TrackingCodeService $trackingCode,
     ) {}
 
     /**
@@ -370,6 +371,16 @@ class WorkflowService
             $document->is_validated = $validation['is_valid'];
             $document->validation_errors = $validation['errors'];
             $document->readability_score = $validation['readability_score'];
+
+            // The first point in this whole method a real category is
+            // actually known — see TrackingCodeService's own docblock for
+            // the format and why $belowChanceFloor/'unrelated' both route
+            // to the OTH fallback prefix instead of the (untrusted)
+            // guessed category's own.
+            $document->tracking_code = $this->trackingCode->nextCodeFor(
+                $result['category'],
+                isTrustedCategory: $routingMode !== 'unrelated' && ! $belowChanceFloor,
+            );
 
             // A confidence guess below the chance floor is rejected
             // outright, regardless of what validation found — there's no

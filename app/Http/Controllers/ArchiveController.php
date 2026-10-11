@@ -175,7 +175,11 @@ class ArchiveController extends Controller
             $keyword = $request->string('keyword');
             $query->where(function ($q) use ($keyword) {
                 $q->where('title', 'like', "%{$keyword}%")
-                    ->orWhere('ocr_text', 'like', "%{$keyword}%");
+                    ->orWhere('ocr_text', 'like', "%{$keyword}%")
+                    // Feature: a short reference like "JO-2026-0047" to
+                    // search by when two documents share the exact same
+                    // title — see TrackingCodeService's own docblock.
+                    ->orWhere('tracking_code', 'like', "%{$keyword}%");
             });
         }
 
@@ -335,7 +339,11 @@ class ArchiveController extends Controller
     public function storeLegacy(Request $request)
     {
         $validated = $request->validate([
-            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:20480'],
+            // Same 15MB per-file ceiling every other upload path in the
+            // app uses now (matches the real system-wide upload_max_filesize)
+            // — see App\Http\Controllers\DocumentController::store()'s own
+            // docblock for the full reasoning behind this specific number.
+            'file' => ['required', 'file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:15360'],
             'category' => ['required', 'in:'.implode(',', ValidationService::knownCategories())],
             'title' => ['nullable', 'string', 'max:255'],
             // Required, not optional — this is the only record of WHY a

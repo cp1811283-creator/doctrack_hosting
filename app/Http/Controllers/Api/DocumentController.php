@@ -22,9 +22,7 @@ use Illuminate\Http\Request;
  */
 class DocumentController extends Controller
 {
-    public function __construct(private WorkflowService $workflow)
-    {
-    }
+    public function __construct(private WorkflowService $workflow) {}
 
     /** The authenticated originator's own submissions; Admin sees every document. */
     public function index(Request $request)
@@ -61,15 +59,29 @@ class DocumentController extends Controller
         abort_unless($request->user()->isOriginator(), 403, 'Only originator accounts can submit documents.');
 
         $validated = $request->validate([
-            'files' => ['required', 'array', 'min:1', 'max:20'],
-            'files.*' => ['file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType(), 'max:20480'],
+            // Same 15MB x 10 files = 150MB rules as the web originator
+            // upload flow (App\Http\Controllers\DocumentController::store())
+            // — see that method's own docblock for why these specific
+            // numbers were chosen (deliberately reconciled against the
+            // real total ceiling, not two independent numbers that
+            // happened to multiply out to more than the server accepts).
+            'files' => ['required', 'array', 'min:1', 'max:10', function ($attribute, $value, $fail) {
+                $totalBytes = collect($value)->filter()->sum(fn ($file) => $file->getSize());
+                $limitBytes = 150 * 1024 * 1024;
+                if ($totalBytes > $limitBytes) {
+                    $totalMb = round($totalBytes / (1024 * 1024), 1);
+                    $fail("These files add up to {$totalMb} MB, which is over the 150 MB total-upload limit — try fewer files or a smaller batch.");
+                }
+            }],
+            'files.*' => ['file', 'mimes:pdf,docx,doc,txt,png,jpg,jpeg', new ReliableMimeType, 'max:15360'],
             'due_date' => ['required', 'date', function ($attribute, $value, $fail) {
                 $buffer = config('sla.min_due_date_buffer_minutes', 15);
                 if (Carbon::parse($value)->lt(now()->addMinutes($buffer))) {
                     $fail("The due date must be at least {$buffer} minutes from now.");
+
                     return;
                 }
-                if (!$this->workflow->isDueDateWithinWorkingHours($value)) {
+                if (! $this->workflow->isDueDateWithinWorkingHours($value)) {
                     $fail('The due date must fall within working hours (9 AM–5 PM, Mon–Sat, excluding holidays). Please pick a valid date and time.');
                 }
             }],

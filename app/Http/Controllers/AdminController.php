@@ -2665,7 +2665,12 @@ class AdminController extends Controller
                 $term = trim($request->string('document'));
                 $numericId = ltrim($term, '#');
                 $q->where(function ($q2) use ($term, $numericId) {
-                    $q2->where('title', 'like', "%{$term}%");
+                    $q2->where('title', 'like', "%{$term}%")
+                        // Feature: a short reference like "JO-2026-0047"
+                        // to search by when two documents share the exact
+                        // same title — see TrackingCodeService's own
+                        // docblock.
+                        ->orWhere('tracking_code', 'like', "%{$term}%");
                     if ($numericId !== '' && ctype_digit($numericId)) {
                         $q2->orWhere('document_id', (int) $numericId);
                     }
